@@ -21,6 +21,7 @@ import pytest
 from pytest_triage import _hookspecs
 from pytest_triage.config import Config
 from pytest_triage.context import FailureContext, build_context, safe_message
+from pytest_triage.report import _ReportWriter
 
 
 def pytest_addhooks(pluginmanager: pytest.PytestPluginManager) -> None:
@@ -84,8 +85,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    plugin = _TriagePlugin(Config.from_config(config))
-    config.pluginmanager.register(plugin, name="pytest_triage_run")
+    resolved = Config.from_config(config)
+    config.pluginmanager.register(_TriagePlugin(resolved), name="pytest_triage_run")
+    if resolved.report is not None:
+        config.pluginmanager.register(
+            _ReportWriter(resolved.report), name="pytest_triage_report_writer"
+        )
 
 
 class _TriagePlugin:

@@ -22,3 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte-budgeted truncation with an explicit marker, strict secret redaction, and
   an xdist-guarded controller-only collection pass. Loaded by default but fully
   transparent unless enabled (invariants 1-2).
+- JSON failure-report artifact (`--ai-report=PATH`): versioned
+  `schema_version: 1`, per-failure context with `verdict: null`, and
+  `pytest_args` (argv-style selectors) that rerun exactly the failed tests.
+  Written atomically and owner-only (`0o600`); a write failure never changes
+  the run's outcome.
+- Hardened secret redaction: JWTs, URL-embedded credentials, PEM private-key
+  blocks, AWS access keys, JSON/shell secret assignments, and short
+  secret-named env values. All redaction patterns are linear (no ReDoS).
