@@ -37,3 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OAuthFakeClient` fakes, a provider registry (lazy entry points + import
   strings) exporting `PROVIDER_API_VERSION`, and a public `assert_conforms`
   conformance kit.
+- `AnthropicClient` (optional `pytest-triage[anthropic]` extra): triage via the
+  Anthropic Messages API using strict tool use for structured output, a lazily
+  imported SDK with a clear "install the extra" error, and model selection via
+  `PYTEST_TRIAGE_MODEL` (default `claude-sonnet-5`). Its live test is marked
+  `live` and excluded from CI.
