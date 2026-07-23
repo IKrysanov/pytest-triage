@@ -18,12 +18,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
 
 RedactMode = Literal["strict", "off"]
+
+# Where triage writes its report unless --ai-report overrides it.
+_DEFAULT_REPORT = ".triage.json"
 
 
 @dataclass(frozen=True)
@@ -39,12 +41,16 @@ class Config:
 
     @classmethod
     def from_config(cls, config: pytest.Config) -> Config:
+        triage = _resolve_str(config, "ai_triage") == "on"
+        report = _as_path(_resolve_opt(config, "ai_report"))
+        if report is None and triage:
+            report = Path(_DEFAULT_REPORT)
         return cls(
-            triage=_resolve_str(config, "ai_triage") == "on",
-            report=_as_path(_resolve_opt(config, "ai_report")),
+            triage=triage,
+            report=report,
             provider=_resolve_opt(config, "ai_provider"),
-            budget=int(_resolve_str(config, "ai_budget")),
-            timeout=float(_resolve_str(config, "ai_timeout")),
+            budget=_resolve_int(config, "ai_budget", minimum=0),
+            timeout=_resolve_positive_float(config, "ai_timeout"),
             redact="off" if _resolve_str(config, "ai_redact") == "off" else "strict",
         )
 
@@ -64,6 +70,36 @@ def _resolve_opt(config: pytest.Config, name: str) -> str | None:
         return str(cli)
     ini = config.getini(name)
     return str(ini) if ini else None
+
+
+def _resolve_int(config: pytest.Config, name: str, *, minimum: int) -> int:
+    """Resolve an integer option with a clear error (ini values are unvalidated)."""
+    raw = _resolve_str(config, name)
+    try:
+        value = int(raw)
+    except ValueError:
+        raise pytest.UsageError(
+            f"pytest-triage: {name} must be an integer, got {raw!r}"
+        ) from None
+    if value < minimum:
+        raise pytest.UsageError(
+            f"pytest-triage: {name} must be >= {minimum}, got {value}"
+        )
+    return value
+
+
+def _resolve_positive_float(config: pytest.Config, name: str) -> float:
+    """Resolve a strictly-positive float option with a clear error."""
+    raw = _resolve_str(config, name)
+    try:
+        value = float(raw)
+    except ValueError:
+        raise pytest.UsageError(
+            f"pytest-triage: {name} must be a number, got {raw!r}"
+        ) from None
+    if value <= 0:
+        raise pytest.UsageError(f"pytest-triage: {name} must be > 0, got {value}")
+    return value
 
 
 def _as_path(value: str | None) -> Path | None:

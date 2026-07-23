@@ -7,38 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-23
+
+First public release. Fully opt-in: installing the plugin changes no existing suite.
+
 ### Added
 
-- Project scaffolding: `src`-layout package, `pyproject.toml` (hatchling), ruff,
-  mypy strict, pytest configuration, GitHub Actions CI matrix (Python
-  3.10–3.13), Apache-2.0 license, and a security policy.
-- Supply-chain and release workflows: CodeQL (SAST), OpenSSF Scorecard, DCO
-  sign-off check, Dependabot, and a PyPI/TestPyPI publish pipeline via Trusted
-  Publishing with Sigstore attestations. CI installs a hash-pinned toolchain
-  from `requirements/` and uploads coverage and JUnit results to Codecov
-  (coverage + Test Analytics). Added `CONTRIBUTING.md` and issue templates.
-- Plugin skeleton and failure-context collection: opt-in `--ai-*` options
-  resolved CLI-over-ini, the frozen `FailureContext` public contract,
-  byte-budgeted truncation with an explicit marker, strict secret redaction, and
-  an xdist-guarded controller-only collection pass. Loaded by default but fully
-  transparent unless enabled (invariants 1-2).
-- JSON failure-report artifact (`--ai-report=PATH`): versioned
-  `schema_version: 1`, per-failure context with `verdict: null`, and
-  `pytest_args` (argv-style selectors) that rerun exactly the failed tests.
-  Written atomically and owner-only (`0o600`); a write failure never changes
-  the run's outcome. Warns when run under xdist, where worker failures are not
-  yet aggregated.
-- Hardened secret redaction: JWTs, URL-embedded credentials, PEM private-key
-  blocks, AWS access keys, JSON/shell secret assignments, and short
-  secret-named env values. All redaction patterns are linear (no ReDoS).
-- Provider extension contract: the `Verdict` public type, a `TriageClient`
-  protocol and `BaseTriageClient` template method (tolerant JSON parsing →
-  `unknown`, never an exception), deterministic `FakeTriageClient` /
-  `OAuthFakeClient` fakes, a provider registry (lazy entry points + import
-  strings) exporting `PROVIDER_API_VERSION`, and a public `assert_conforms`
-  conformance kit.
-- `AnthropicClient` (optional `pytest-triage[anthropic]` extra): triage via the
-  Anthropic Messages API using strict tool use for structured output, a lazily
-  imported SDK with a clear "install the extra" error, and model selection via
-  `PYTEST_TRIAGE_MODEL` (default `claude-sonnet-5`). Its live test is marked
-  `live` and excluded from CI.
+- Failure collection: opt-in `--ai-*` options (CLI over ini) building a frozen
+  `FailureContext` per failure, with byte-budgeted truncation (explicit marker)
+  and strict, linear-time secret redaction; controller-only under xdist.
+- Versioned JSON report (`--ai-report=PATH`, `schema_version: 1`) with per-failure
+  context, verdict, and `pytest_args` to rerun exactly the failures. Written
+  atomically and owner-only (`0o600`); a write failure never affects the run.
+- Provider contract: frozen `Verdict`, `TriageClient` protocol, `BaseTriageClient`
+  template method, `FakeTriageClient` / `OAuthFakeClient`, a lazy registry (entry
+  points + import strings, `PROVIDER_API_VERSION`), and the `assert_conforms` kit.
+- `AnthropicClient` (optional `[anthropic]` extra): strict tool use, lazily
+  imported, model via `PYTEST_TRIAGE_MODEL`, retries disabled to fail fast.
+- Triage execution: `CachingClient` / `BudgetedClient` / `TimedOutClient` composed
+  by one factory. `--ai-triage=on` analyzes each failure, writes verdicts to the
+  report (default `.triage.json`), and prints a summary. A provider that raises,
+  times out, or is misconfigured degrades to `unknown` with the cause surfaced,
+  never changing the run's exit code (invariant 1).
+- Packaging and workflows: `src`-layout, hatchling, ruff, strict mypy, CI matrix
+  (3.10–3.13), CodeQL, Scorecard, DCO, Dependabot, Codecov, and a Trusted-Publishing
+  release with Sigstore attestations.
+
+[Unreleased]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/IKrysanov/pytest-triage/releases/tag/v0.1.0

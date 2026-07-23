@@ -26,20 +26,26 @@ if TYPE_CHECKING:
     from _pytest.pytester import Pytester, RunResult
 
     from pytest_triage.config import Config
+    from pytest_triage.verdict import Verdict
 
 
 class TriageSpy:
-    """Records the failures and config handed to `pytest_triage_report`."""
+    """Records the failures, verdicts, and config handed to the report hook."""
 
     def __init__(self) -> None:
         self.failures: list[FailureContext] = []
+        self.verdicts: list[Verdict | None] = []
         self.triage_config: Config | None = None
 
     @pytest.hookimpl(optionalhook=True)
     def pytest_triage_report(
-        self, failures: list[FailureContext], triage_config: Config
+        self,
+        failures: list[FailureContext],
+        verdicts: list[Verdict | None],
+        triage_config: Config,
     ) -> None:
         self.failures = list(failures)
+        self.verdicts = list(verdicts)
         self.triage_config = triage_config
 
 

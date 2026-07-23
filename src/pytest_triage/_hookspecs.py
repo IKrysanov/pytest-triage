@@ -21,12 +21,18 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pytest_triage.config import Config
     from pytest_triage.context import FailureContext
+    from pytest_triage.verdict import Verdict
 
 
-def pytest_triage_report(failures: list[FailureContext], triage_config: Config) -> None:
-    """Fire once on the controller after collection, with all failure contexts.
+def pytest_triage_report(
+    failures: list[FailureContext],
+    verdicts: list[Verdict | None],
+    triage_config: Config,
+) -> None:
+    """Fire once on the controller after collection.
 
-    Notification hook: every implementer runs. The JSON report writer (PR3) and
-    downstream consumers implement this. By default nothing does, so a run stays
-    byte-identical to one without the plugin (invariant 2).
+    `verdicts` is aligned with `failures` (one entry each); an entry is None when
+    triage is disabled. Notification hook: every implementer runs. The JSON
+    report writer and downstream consumers implement this. By default nothing
+    does, so a run stays byte-identical to one without the plugin (invariant 2).
     """

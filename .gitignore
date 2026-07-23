@@ -43,6 +43,10 @@ htmlcov/
 .nox/
 .coverage
 .coverage.*
+.triage.json
+.triage-test.json
+.triage-*.json
+triage.json
 .cache
 nosetests.xml
 coverage.xml
