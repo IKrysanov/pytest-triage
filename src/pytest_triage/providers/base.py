@@ -35,9 +35,11 @@ if TYPE_CHECKING:
 class TriageClient(Protocol):
     """The provider contract: analyze one failure, then close."""
 
-    def analyze(self, ctx: FailureContext) -> Verdict: ...  # pragma: no cover
+    def analyze(self, ctx: FailureContext) -> Verdict:
+        """Analyze one failure and return a Verdict."""
 
-    def close(self) -> None: ...  # pragma: no cover
+    def close(self) -> None:
+        """Release any resources the client holds (sessions, tokens)."""
 
 
 class BaseTriageClient:
