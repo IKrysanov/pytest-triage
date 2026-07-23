@@ -39,6 +39,9 @@ Homepage = "https://github.com/IKrysanov/pytest-triage"
 Changelog = "https://github.com/IKrysanov/pytest-triage/blob/main/CHANGELOG.md"
 Issues = "https://github.com/IKrysanov/pytest-triage/issues"
 
+[project.entry-points.pytest11]
+pytest_triage = "pytest_triage.plugin"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/pytest_triage"]
 
@@ -68,4 +71,11 @@ source = ["pytest_triage"]
 branch = true
 
 [tool.coverage.report]
+fail_under = 85
 show_missing = true
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

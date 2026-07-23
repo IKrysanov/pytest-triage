@@ -11,16 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""pytest-triage: structured failure triage for pytest."""
-
-from __future__ import annotations
-
-from importlib.metadata import PackageNotFoundError, version
-
-try:
-    __version__ = version("pytest-triage")
-except PackageNotFoundError:  # pragma: no cover - source tree without metadata
-    __version__ = "0.0.0.dev0"
-
-__all__ = ["__version__"]

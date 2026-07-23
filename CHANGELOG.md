@@ -17,3 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Publishing with Sigstore attestations. CI installs a hash-pinned toolchain
   from `requirements/` and uploads coverage and JUnit results to Codecov
   (coverage + Test Analytics). Added `CONTRIBUTING.md` and issue templates.
+- Plugin skeleton and failure-context collection: opt-in `--ai-*` options
+  resolved CLI-over-ini, the frozen `FailureContext` public contract,
+  byte-budgeted truncation with an explicit marker, strict secret redaction, and
+  an xdist-guarded controller-only collection pass. Loaded by default but fully
+  transparent unless enabled (invariants 1-2).
