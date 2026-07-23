@@ -33,6 +33,7 @@ dev = [
     "mypy>=1.8",
     "ruff>=0.4",
 ]
+anthropic = ["anthropic>=0.40"]
 
 [project.urls]
 Homepage = "https://github.com/IKrysanov/pytest-triage"
@@ -45,6 +46,7 @@ pytest_triage = "pytest_triage.plugin"
 [project.entry-points."pytest_triage.providers"]
 fake = "pytest_triage.providers.fake:FakeTriageClient"
 oauth-fake = "pytest_triage.providers.fake:OAuthFakeClient"
+anthropic = "pytest_triage.providers.anthropic:AnthropicClient"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pytest_triage"]
@@ -61,6 +63,12 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH", "RUF"]
 python_version = "3.10"
 strict = true
 files = ["src", "tests", "conftest.py"]
+
+# The anthropic SDK is an optional extra, not installed in CI; treat it as
+# untyped rather than failing the type check when it is absent.
+[[tool.mypy.overrides]]
+module = ["anthropic", "anthropic.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "7.0"
