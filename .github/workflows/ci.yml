@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install dev toolchain
+        # Hash-pinned locks (Scorecard Pinned-Dependencies); dev.txt pins the
+        # runtime dep too, so the package installs with --no-deps.
+        run: |
+          python -m pip install --require-hashes -r requirements/dev.txt
+          python -m pip install -e . --no-deps
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: mypy
+
+  unit:
+    name: Unit (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package + test deps
+        run: |
+          python -m pip install --require-hashes -r requirements/dev.txt
+          python -m pip install -e . --no-deps
+      - name: Pytest
+        # Coverage + JUnit only on one interpreter; Codecov consumes both.
+        run: |
+          if [ "${{ matrix.python-version }}" = "3.12" ]; then
+            pytest -q --cov=pytest_triage --cov-report=xml --cov-report=term-missing \
+              --junitxml=junit.xml -o junit_family=legacy
+          else
+            pytest -q
+          fi
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        with:
+          files: ./coverage.xml
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+      - name: Upload test results to Codecov
+        # Runs even when tests fail, so Codecov Test Analytics sees the failures.
+        if: ${{ !cancelled() && matrix.python-version == '3.12' }}
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3  # v1.2.1
+        with:
+          files: ./junit.xml
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
