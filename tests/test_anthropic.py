@@ -36,10 +36,11 @@ def _install_fake_anthropic(
     monkeypatch: pytest.MonkeyPatch, blocks: list[Any]
 ) -> dict[str, Any]:
     """Inject a fake `anthropic` whose client returns `blocks` from create()."""
-    calls: dict[str, Any] = {"closed": False, "kwargs": None}
+    calls: dict[str, Any] = {"closed": False, "kwargs": None, "init_kwargs": {}}
 
     class _Anthropic:
-        def __init__(self, api_key: str | None = None) -> None:
+        def __init__(self, api_key: str | None = None, **kwargs: Any) -> None:
+            calls["init_kwargs"] = kwargs
             self.messages = types.SimpleNamespace(create=self._create)
 
         def _create(self, **kwargs: Any) -> types.SimpleNamespace:
@@ -111,6 +112,30 @@ def test_invalid_values_become_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     verdict = AnthropicClient().analyze(_ctx())
     assert verdict.category == "unknown"
     assert verdict.confidence == "low"
+
+
+def test_api_error_propagates_from_analyze(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A bad key makes the SDK raise (a 401). The provider propagates it; the
+    # TimedOutClient wrapper is what turns it into a visible "unknown" verdict.
+    class _Anthropic:
+        def __init__(self, api_key: str | None = None, **kwargs: Any) -> None:
+            self.messages = types.SimpleNamespace(create=self._create)
+
+        def _create(self, **kwargs: Any) -> Any:
+            raise RuntimeError("Error code: 401 - invalid x-api-key")
+
+    fake = types.SimpleNamespace(Anthropic=_Anthropic)
+    monkeypatch.setitem(sys.modules, "anthropic", cast("types.ModuleType", fake))
+    with pytest.raises(RuntimeError, match="invalid x-api-key"):
+        AnthropicClient().analyze(_ctx())
+
+
+def test_sdk_configured_to_fail_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Retries are disabled so a rate-limited call fails fast (surfaced as a clear
+    # unknown) instead of retrying past the wall-clock cap.
+    calls = _install_fake_anthropic(monkeypatch, [])
+    AnthropicClient()
+    assert calls["init_kwargs"]["max_retries"] == 0
 
 
 def test_close_closes_client(monkeypatch: pytest.MonkeyPatch) -> None:

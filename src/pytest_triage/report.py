@@ -27,38 +27,55 @@ if TYPE_CHECKING:
 
     from pytest_triage.config import Config
     from pytest_triage.context import FailureContext
+    from pytest_triage.verdict import Verdict
 
 # Versioned from day one; evolve additively only.
 SCHEMA_VERSION = 1
 
 
-def build_report(failures: list[FailureContext]) -> dict[str, Any]:
-    """Assemble the machine-readable report payload."""
+def build_report(
+    failures: list[FailureContext], verdicts: list[Verdict | None]
+) -> dict[str, Any]:
+    """Assemble the machine-readable report payload.
+
+    `verdicts` is aligned with `failures`; each entry is None when triage is off.
+    """
     return {
         "schema_version": SCHEMA_VERSION,
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         # Ready-to-run selectors that rerun every failure in one command.
         "pytest_args": _dedup([failure.nodeid for failure in failures]),
-        "failures": [_failure_to_dict(failure) for failure in failures],
+        "failures": [
+            _failure_to_dict(failure, verdict)
+            for failure, verdict in zip(failures, verdicts, strict=True)
+        ],
     }
 
 
-def write_report(path: Path, failures: list[FailureContext]) -> None:
+def write_report(
+    path: Path, failures: list[FailureContext], verdicts: list[Verdict | None]
+) -> None:
     """Serialize the report and write it atomically (temp file + os.replace).
 
     The file is created owner-only (0o600 on POSIX): even after redaction it may
     hold residual sensitive output and must not be world-readable on a shared CI
     host.
     """
-    text = json.dumps(build_report(failures), indent=2, ensure_ascii=False)
+    text = json.dumps(build_report(failures, verdicts), indent=2, ensure_ascii=False)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.chmod(0o600)
+    # Create the temp owner-only from the first byte: writing then chmod would
+    # leave a brief world-readable window on a shared host. replace() keeps mode.
+    tmp.unlink(missing_ok=True)  # drop a stale temp from a crashed same-pid run
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
     tmp.replace(path)
 
 
-def _failure_to_dict(failure: FailureContext) -> dict[str, Any]:
+def _failure_to_dict(
+    failure: FailureContext, verdict: Verdict | None
+) -> dict[str, Any]:
     return {
         "nodeid": failure.nodeid,
         "pytest_args": [failure.nodeid],
@@ -70,8 +87,18 @@ def _failure_to_dict(failure: FailureContext) -> dict[str, Any]:
         "duration": failure.duration,
         "stdout_tail": failure.stdout_tail,
         "stderr_tail": failure.stderr_tail,
-        # Filled by the triage layer in a later milestone; null until then.
-        "verdict": None,
+        "verdict": _verdict_to_dict(verdict),
+    }
+
+
+def _verdict_to_dict(verdict: Verdict | None) -> dict[str, Any] | None:
+    if verdict is None:
+        return None
+    return {
+        "category": verdict.category,
+        "hypothesis": verdict.hypothesis,
+        "confidence": verdict.confidence,
+        "suggested_fix": verdict.suggested_fix,
     }
 
 
@@ -91,10 +118,13 @@ class _ReportWriter:
         self._path = path
 
     def pytest_triage_report(
-        self, failures: list[FailureContext], triage_config: Config
+        self,
+        failures: list[FailureContext],
+        verdicts: list[Verdict | None],
+        triage_config: Config,
     ) -> None:
         try:
-            write_report(self._path, failures)
+            write_report(self._path, failures, verdicts)
         except Exception as exc:  # never let reporting affect the test run
             print(
                 f"pytest-triage: failed to write report to {self._path}: {exc}",

@@ -62,3 +62,61 @@ def test_report_and_provider_from_cli(pytester: pytest.Pytester) -> None:
     assert cfg.report is not None
     assert cfg.report.name == "out.json"
     assert cfg.provider == "fake:Client"
+
+
+def test_triage_on_defaults_report_path(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(_ONE_FAILURE)
+    spy, _ = run_triage(pytester, "--ai-triage=on", "--ai-provider=fake")
+    cfg = spy.triage_config
+    assert cfg is not None
+    assert cfg.report is not None
+    assert cfg.report.name == ".triage.json"  # default applied by triage-on
+
+
+def test_explicit_report_overrides_default(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(_ONE_FAILURE)
+    spy, _ = run_triage(
+        pytester, "--ai-triage=on", "--ai-provider=fake", "--ai-report=custom.json"
+    )
+    cfg = spy.triage_config
+    assert cfg is not None
+    assert cfg.report is not None
+    assert cfg.report.name == "custom.json"
+
+
+def test_non_numeric_budget_ini_is_a_clear_error(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(_ONE_FAILURE)
+    pytester.makeini("[pytest]\nai_budget = abc\n")  # ini values bypass argparse
+    result = pytester.runpytest_inprocess(str(pytester.path))
+    result.stderr.fnmatch_lines(["*ai_budget must be an integer*"])
+
+
+def test_negative_budget_is_rejected(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(_ONE_FAILURE)
+    result = pytester.runpytest_inprocess(str(pytester.path), "--ai-budget=-3")
+    result.stderr.fnmatch_lines(["*ai_budget must be >= 0*"])
+
+
+def test_non_numeric_timeout_ini_is_a_clear_error(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(_ONE_FAILURE)
+    pytester.makeini("[pytest]\nai_timeout = soon\n")
+    result = pytester.runpytest_inprocess(str(pytester.path))
+    result.stderr.fnmatch_lines(["*ai_timeout must be a number*"])
+
+
+def test_non_positive_timeout_is_rejected(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(_ONE_FAILURE)
+    result = pytester.runpytest_inprocess(str(pytester.path), "--ai-timeout=0")
+    result.stderr.fnmatch_lines(["*ai_timeout must be > 0*"])
+
+
+def test_warns_when_triage_on_without_provider(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(_ONE_FAILURE)
+    _, result = run_triage(pytester, "--ai-triage=on")
+    result.stdout.fnmatch_lines(["*no --ai-provider is set*"])
+
+
+def test_warns_when_provider_set_without_triage(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(_ONE_FAILURE)
+    _, result = run_triage(pytester, "--ai-provider=fake")
+    result.stdout.fnmatch_lines(["*triage is off*"])

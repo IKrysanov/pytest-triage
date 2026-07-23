@@ -32,6 +32,7 @@ from pytest_triage.plugin import (
     _TriagePlugin,
     _warn_if_report_incomplete_under_xdist,
 )
+from pytest_triage.verdict import Verdict
 
 
 def test_truncate_tail_keeps_end_with_marker() -> None:
@@ -133,7 +134,7 @@ def test_config_defaults() -> None:
 
 
 def test_collector_records_failure_via_exception_interact() -> None:
-    plugin = _TriagePlugin(Config(redact="off"))
+    plugin = _TriagePlugin(Config(redact="off"), None)
 
     def boom() -> None:
         raise ValueError("kaboom")
@@ -148,7 +149,7 @@ def test_collector_records_failure_via_exception_interact() -> None:
 
 
 def test_collector_ignores_passed_reports() -> None:
-    plugin = _TriagePlugin(Config())
+    plugin = _TriagePlugin(Config(), None)
     report = _make_report("irrelevant")
     report.outcome = "passed"
     call = cast(
@@ -171,7 +172,7 @@ def test_build_context_without_message() -> None:
 
 
 def test_sessionfinish_skips_on_xdist_worker() -> None:
-    plugin = _TriagePlugin(Config())
+    plugin = _TriagePlugin(Config(), None)
 
     class _WorkerConfig:
         workerinput = "gw0"  # only presence matters (the hasattr guard)
@@ -215,6 +216,28 @@ def test_no_xdist_warning_when_serial() -> None:
     cfg = _FakeConfig()
     _warn_if_report_incomplete_under_xdist(cast("pytest.Config", cfg))
     assert cfg.warnings == []
+
+
+def test_triage_survives_a_client_that_raises() -> None:
+    # The wrappers normally fence every provider call; this guards the case
+    # where the wrapper machinery itself raises (e.g. thread exhaustion). The
+    # triage pass must never propagate and change the run (invariant 1).
+    class _Broken:
+        def analyze(self, ctx: FailureContext) -> Verdict:
+            raise RuntimeError("wrapper machinery blew up")
+
+        def close(self) -> None:
+            raise RuntimeError("close blew up")
+
+    plugin = _TriagePlugin(Config(triage=True, provider="x"), _Broken())
+    plugin._failures.append(
+        FailureContext(nodeid="t.py::a", phase="call", outcome="failed")
+    )
+    verdicts = plugin._triage()
+    assert len(verdicts) == 1
+    assert verdicts[0] is not None
+    assert verdicts[0].category == "unknown"
+    assert plugin._triage_errors == ["triage failed"]  # collected for the terminal
 
 
 def test_no_xdist_warning_on_worker() -> None:

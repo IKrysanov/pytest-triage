@@ -25,6 +25,7 @@ import pytest
 from pytest_triage.config import Config
 from pytest_triage.context import FailureContext
 from pytest_triage.report import _ReportWriter, build_report, write_report
+from pytest_triage.verdict import Verdict
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -40,7 +41,7 @@ def test_build_report_shape_and_dedup() -> None:
         traceback="tb",
         duration=0.1,
     )
-    report = build_report([fc, fc])  # same nodeid twice
+    report = build_report([fc, fc], [None, None])  # same nodeid twice
     assert report["schema_version"] == 1
     assert report["created_at"].endswith("Z")
     assert report["pytest_args"] == ["t.py::a"]  # deduped
@@ -52,10 +53,33 @@ def test_build_report_shape_and_dedup() -> None:
     assert first["verdict"] is None
 
 
+def test_build_report_serializes_verdict() -> None:
+    fc = FailureContext(nodeid="t.py::a", phase="call", outcome="failed")
+    verdict = Verdict(
+        category="regression",
+        hypothesis="the diff broke it",
+        confidence="high",
+        suggested_fix="revert",
+    )
+    report = build_report([fc], [verdict])
+    assert report["failures"][0]["verdict"] == {
+        "category": "regression",
+        "hypothesis": "the diff broke it",
+        "confidence": "high",
+        "suggested_fix": "revert",
+    }
+
+
+def test_build_report_rejects_misaligned_verdicts() -> None:
+    fc = FailureContext(nodeid="t.py::a", phase="call", outcome="failed")
+    with pytest.raises(ValueError):
+        build_report([fc, fc], [None])  # length mismatch must not pass silently
+
+
 def test_write_report_is_atomic_and_creates_parents(tmp_path: Path) -> None:
     fc = FailureContext(nodeid="t.py::a", phase="call", outcome="failed")
     path = tmp_path / "nested" / "report.json"  # parent does not exist yet
-    write_report(path, [fc])
+    write_report(path, [fc], [None])
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["schema_version"] == 1
     assert list(tmp_path.glob("**/*.tmp")) == []  # temp file replaced, not left
@@ -68,7 +92,8 @@ def test_report_writer_swallows_write_errors(
     blocker.write_text("i am a file", encoding="utf-8")
     # The target's parent is a regular file, so mkdir/write fails.
     writer = _ReportWriter(blocker / "report.json")
-    writer.pytest_triage_report(failures=[], triage_config=Config())  # must not raise
+    # must not raise
+    writer.pytest_triage_report(failures=[], verdicts=[], triage_config=Config())
     assert "failed to write report" in capsys.readouterr().err
 
 
@@ -92,6 +117,45 @@ def test_report_written_and_valid(pytester: pytest.Pytester) -> None:
     assert failure["nodeid"].endswith("::test_fail")
     assert failure["verdict"] is None
     assert data["pytest_args"] == [failure["nodeid"]]
+
+
+def test_triage_on_writes_default_report(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+        def test_fail():
+            assert 1 == 2
+        """
+    )
+    # Turning triage on writes .triage.json even without an explicit --ai-report.
+    pytester.runpytest_inprocess(
+        str(pytester.path), "--ai-triage=on", "--ai-provider=fake"
+    )
+    report = pytester.path / ".triage.json"
+    assert report.exists()
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["failures"][0]["verdict"]["category"] == "test_bug"
+
+
+def test_report_includes_verdict_when_triage_on(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        """
+        def test_fail():
+            assert 1 == 2
+        """
+    )
+    result = pytester.runpytest_inprocess(
+        str(pytester.path),
+        "--ai-triage=on",
+        "--ai-provider=fake",
+        "--ai-report=report.json",
+    )
+    result.assert_outcomes(failed=1)  # triage never changes the outcome
+
+    data = json.loads((pytester.path / "report.json").read_text(encoding="utf-8"))
+    verdict = data["failures"][0]["verdict"]
+    assert verdict is not None
+    # FakeTriageClient maps AssertionError -> test_bug deterministically.
+    assert verdict["category"] == "test_bug"
 
 
 def test_pytest_args_rerun_exactly_the_failures(pytester: pytest.Pytester) -> None:
@@ -131,5 +195,5 @@ def test_pytest_args_rerun_exactly_the_failures(pytester: pytest.Pytester) -> No
 def test_report_file_is_owner_only(tmp_path: Path) -> None:
     fc = FailureContext(nodeid="t.py::a", phase="call", outcome="failed")
     path = tmp_path / "report.json"
-    write_report(path, [fc])
+    write_report(path, [fc], [None])
     assert (path.stat().st_mode & 0o777) == 0o600

@@ -35,6 +35,9 @@ if TYPE_CHECKING:
 _DEFAULT_MODEL = "claude-sonnet-5"
 _MODEL_ENV = "PYTEST_TRIAGE_MODEL"
 _MAX_TOKENS = 1024
+# Fail fast: the plugin's budget/timeout layer owns resilience, so SDK retries
+# only fight the wall-clock cap and leave abandoned threads hitting the API.
+_MAX_RETRIES = 0
 
 _SYSTEM = """\
 You are a test-failure triage assistant. You are given the context of a single
@@ -91,7 +94,11 @@ class AnthropicClient(BaseTriageClient):
         except ImportError as exc:
             raise _missing_dependency_error() from exc
         self._model = model or os.environ.get(_MODEL_ENV, _DEFAULT_MODEL)
-        self._client = anthropic.Anthropic(api_key=api_key)
+        # Typed Any: the SDK is untyped in CI (not installed); keep the create()
+        # call consistent whether or not anthropic is present locally.
+        self._client: Any = anthropic.Anthropic(
+            api_key=api_key, max_retries=_MAX_RETRIES
+        )
 
     def _render_prompt(self, ctx: FailureContext) -> str:
         return (
