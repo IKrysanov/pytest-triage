@@ -88,9 +88,23 @@ def pytest_configure(config: pytest.Config) -> None:
     resolved = Config.from_config(config)
     config.pluginmanager.register(_TriagePlugin(resolved), name="pytest_triage_run")
     if resolved.report is not None:
+        _warn_if_report_incomplete_under_xdist(config)
         config.pluginmanager.register(
             _ReportWriter(resolved.report), name="pytest_triage_report_writer"
         )
+
+
+def _warn_if_report_incomplete_under_xdist(config: pytest.Config) -> None:
+    """Warn on an xdist controller: worker failures aren't aggregated (0.1.0)."""
+    if hasattr(config, "workerinput") or not config.getoption("numprocesses", None):
+        return
+    config.issue_config_time_warning(
+        pytest.PytestConfigWarning(
+            "pytest-triage: the failure report does not aggregate xdist worker "
+            "failures and will be empty under -n; run triage without xdist."
+        ),
+        stacklevel=2,
+    )
 
 
 class _TriagePlugin:

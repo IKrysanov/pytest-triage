@@ -23,3 +23,12 @@ The optional LLM-triage layer sends failure context (tracebacks, captured
 output) to a third-party provider. Secret redaction is enabled by default
 (`--ai-redact=strict`). Do not disable it on suites whose failures may embed
 credentials.
+
+Redaction is best-effort and applies to the traceback and captured output, but
+**not** to test identifiers. A parametrized test id (for example
+`test_login[SECRET]`) is written verbatim to the report because it is the
+selector used to rerun the test — so **do not parametrize tests with real
+secrets**.
+
+The report file is written owner-only (`0o600` on POSIX). Still treat it as
+potentially sensitive and store it accordingly.

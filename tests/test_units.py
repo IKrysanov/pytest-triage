@@ -28,7 +28,10 @@ from pytest_triage.context import (
     build_context,
     safe_message,
 )
-from pytest_triage.plugin import _TriagePlugin
+from pytest_triage.plugin import (
+    _TriagePlugin,
+    _warn_if_report_incomplete_under_xdist,
+)
 
 
 def test_truncate_tail_keeps_end_with_marker() -> None:
@@ -179,3 +182,54 @@ def test_sessionfinish_skips_on_xdist_worker() -> None:
     # workerinput present -> the controller guard returns before touching the
     # hook relay, so a config with no `.hook` must not raise.
     plugin.pytest_sessionfinish(cast("pytest.Session", _Session()))
+
+
+def test_xdist_warning_emitted_on_controller() -> None:
+    class _FakeConfig:
+        def __init__(self) -> None:
+            self.warnings: list[Warning] = []
+
+        def getoption(self, name: str, default: object = None) -> int:
+            return 4  # -n 4
+
+        def issue_config_time_warning(self, warning: Warning, stacklevel: int) -> None:
+            self.warnings.append(warning)
+
+    cfg = _FakeConfig()
+    _warn_if_report_incomplete_under_xdist(cast("pytest.Config", cfg))
+    assert cfg.warnings
+    assert "xdist" in str(cfg.warnings[0])
+
+
+def test_no_xdist_warning_when_serial() -> None:
+    class _FakeConfig:
+        def __init__(self) -> None:
+            self.warnings: list[Warning] = []
+
+        def getoption(self, name: str, default: object = None) -> None:
+            return None  # no xdist
+
+        def issue_config_time_warning(self, warning: Warning, stacklevel: int) -> None:
+            self.warnings.append(warning)
+
+    cfg = _FakeConfig()
+    _warn_if_report_incomplete_under_xdist(cast("pytest.Config", cfg))
+    assert cfg.warnings == []
+
+
+def test_no_xdist_warning_on_worker() -> None:
+    class _FakeConfig:
+        workerinput = "gw0"
+
+        def __init__(self) -> None:
+            self.warnings: list[Warning] = []
+
+        def getoption(self, name: str, default: object = None) -> int:
+            return 4
+
+        def issue_config_time_warning(self, warning: Warning, stacklevel: int) -> None:
+            self.warnings.append(warning)
+
+    cfg = _FakeConfig()
+    _warn_if_report_incomplete_under_xdist(cast("pytest.Config", cfg))
+    assert cfg.warnings == []
