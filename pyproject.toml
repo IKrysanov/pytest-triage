@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pytest-triage"
+version = "0.1.0.dev0"
+description = "Structured failure triage for pytest, with optional LLM verdicts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Ilya", email = "idkrysanov.qa@gmail.com" }]
+keywords = ["pytest", "plugin", "testing", "triage", "llm", "ci"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+dependencies = ["pytest>=7.0"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest-cov>=4.0",
+    "mypy>=1.8",
+    "ruff>=0.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/IKrysanov/pytest-triage"
+Changelog = "https://github.com/IKrysanov/pytest-triage/blob/main/CHANGELOG.md"
+Issues = "https://github.com/IKrysanov/pytest-triage/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pytest_triage"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH", "RUF"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src", "tests", "conftest.py"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -m 'not live'"
+testpaths = ["tests"]
+markers = [
+    "live: hits a real provider network endpoint; excluded from the default run",
+]
+
+[tool.coverage.run]
+source = ["pytest_triage"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
