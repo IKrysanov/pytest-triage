@@ -42,6 +42,10 @@ Issues = "https://github.com/IKrysanov/pytest-triage/issues"
 [project.entry-points.pytest11]
 pytest_triage = "pytest_triage.plugin"
 
+[project.entry-points."pytest_triage.providers"]
+fake = "pytest_triage.providers.fake:FakeTriageClient"
+oauth-fake = "pytest_triage.providers.fake:OAuthFakeClient"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/pytest_triage"]
 

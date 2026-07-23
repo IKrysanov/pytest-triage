@@ -44,7 +44,11 @@ class TriageSpy:
 
 
 def run_triage(pytester: Pytester, *args: str) -> tuple[TriageSpy, RunResult]:
-    """Run pytester in-process with a spy attached; return (spy, result)."""
+    """Run pytester in-process with a spy attached; return (spy, result).
+
+    Collection is scoped to the pytester tmp dir so an inprocess run can never
+    pick up the outer project's own tests (rootdir / testpaths inheritance).
+    """
     spy = TriageSpy()
-    result = pytester.runpytest_inprocess(*args, plugins=[spy])
+    result = pytester.runpytest_inprocess(str(pytester.path), *args, plugins=[spy])
     return spy, result

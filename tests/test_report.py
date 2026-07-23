@@ -82,7 +82,7 @@ def test_report_written_and_valid(pytester: pytest.Pytester) -> None:
             assert 1 == 2
         """
     )
-    result = pytester.runpytest_inprocess("--ai-report=report.json")
+    result = pytester.runpytest_inprocess(str(pytester.path), "--ai-report=report.json")
     result.assert_outcomes(passed=1, failed=1)
 
     data = json.loads((pytester.path / "report.json").read_text(encoding="utf-8"))
@@ -110,12 +110,18 @@ def test_pytest_args_rerun_exactly_the_failures(pytester: pytest.Pytester) -> No
             raise ValueError("boom")
         """
     )
-    pytester.runpytest_inprocess("--ai-report=report.json")
+    pytester.runpytest_inprocess(
+        "--rootdir", str(pytester.path), str(pytester.path), "--ai-report=report.json"
+    )
     data = json.loads((pytester.path / "report.json").read_text(encoding="utf-8"))
     rerun_args = data["pytest_args"]
     assert len(rerun_args) == 2
 
-    result = pytester.runpytest_inprocess(*rerun_args)
+    # Force rootdir + absolute nodeids so the rerun resolves wherever the tmp dir
+    # sits relative to any outer config.
+    result = pytester.runpytest_inprocess(
+        "--rootdir", str(pytester.path), *(str(pytester.path / a) for a in rerun_args)
+    )
     outcomes = result.parseoutcomes()
     assert outcomes.get("failed") == 2
     assert outcomes.get("passed", 0) == 0  # only the two failures reran

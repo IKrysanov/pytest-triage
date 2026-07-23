@@ -48,8 +48,10 @@ def _normalize(text: str) -> str:
 
 def test_default_run_matches_disabled(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(_SUITE)
-    with_plugin = pytester.runpytest_subprocess()
-    without = pytester.runpytest_subprocess("-p", "no:pytest_triage")
+    with_plugin = pytester.runpytest_subprocess(str(pytester.path))
+    without = pytester.runpytest_subprocess(
+        str(pytester.path), "-p", "no:pytest_triage"
+    )
     assert with_plugin.ret == without.ret
     assert with_plugin.ret != 0  # the suite genuinely fails
     assert _normalize(with_plugin.stdout.str()) == _normalize(without.stdout.str())
@@ -57,7 +59,9 @@ def test_default_run_matches_disabled(pytester: pytest.Pytester) -> None:
 
 def test_triage_off_matches_disabled(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(_SUITE)
-    off = pytester.runpytest_subprocess("--ai-triage=off")
-    without = pytester.runpytest_subprocess("-p", "no:pytest_triage")
+    off = pytester.runpytest_subprocess(str(pytester.path), "--ai-triage=off")
+    without = pytester.runpytest_subprocess(
+        str(pytester.path), "-p", "no:pytest_triage"
+    )
     assert off.ret == without.ret
     assert _normalize(off.stdout.str()) == _normalize(without.stdout.str())
