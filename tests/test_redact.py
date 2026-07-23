@@ -54,3 +54,45 @@ def test_pathlike_env_value_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_empty_text_is_noop() -> None:
     assert redact("") == ""
+
+
+def test_jwt_redacted() -> None:
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4h-abc"
+    result = redact(f"decoded from {jwt} ok")
+    assert jwt not in result
+    assert "[REDACTED]" in result
+
+
+def test_url_credentials_redacted() -> None:
+    result = redact("dsn=postgres://admin:s3cr3tPass@db.internal:5432/app")
+    assert "s3cr3tPass" not in result
+    assert "postgres://admin:[REDACTED]@db.internal" in result
+
+
+def test_pem_private_key_redacted() -> None:
+    pem = (
+        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "MIIEpAIBAAKCAQEA1234567890abcdefGHIJ\n"
+        "-----END RSA PRIVATE KEY-----"
+    )
+    result = redact(f"key material:\n{pem}\ndone")
+    assert "MIIEpAIBAAKCAQEA1234567890abcdefGHIJ" not in result
+    assert "[REDACTED]" in result
+
+
+def test_json_style_api_key_redacted() -> None:
+    result = redact('config {"api_key": "abcDEF123456", "url": "http://x"}')
+    assert "abcDEF123456" not in result
+
+
+def test_basic_auth_redacted() -> None:
+    assert "dXNlcjpwYXNz" not in redact("Authorization: Basic dXNlcjpwYXNz")
+
+
+def test_aws_access_key_redacted() -> None:
+    assert "AKIAIOSFODNN7EXAMPLE" not in redact("aws AKIAIOSFODNN7EXAMPLE used")
+
+
+def test_short_secret_named_env_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("API_TOKEN", "x1y2z")  # short, but the name signals a secret
+    assert "x1y2z" not in redact("leaked x1y2z here")

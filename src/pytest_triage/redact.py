@@ -54,35 +54,65 @@ _SAFE_ENV_KEYS = frozenset(
     }
 )
 
-_BEARER = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]+")
-_ASSIGNMENT = re.compile(
-    r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key)(\s*[=:]\s*)(\S+)"
+# Env var names that signal a secret; their values are redacted even when short.
+_SECRET_ENV_NAME = re.compile(
+    r"(?i)(secret|token|password|passwd|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key|credential|auth|session)"
 )
-# Long base64-ish runs are far more likely tokens/keys than prose.
+
+# --- Structured secret shapes. Every pattern is linear (no catastrophic
+# backtracking / ReDoS). ---
+# PEM private-key blocks (multi-line).
+_PEM = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+    re.DOTALL,
+)
+# JWTs: three base64url segments joined by dots (the eyJ header is base64 '{"').
+_JWT = re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+# Credentials embedded in a URL: scheme://user:PASSWORD@host. Quantifiers are
+# bounded so a long non-URL run cannot trigger quadratic scanning.
+_URL_CRED = re.compile(
+    r"([a-zA-Z][\w+.\-]{0,39}://[^\s:/@]{1,256}:)([^\s@/]{1,256})(@)"
+)
+# HTTP auth header (any scheme) and inline bearer/basic tokens.
+_AUTH_HEADER = re.compile(r"(?i)(authorization\s*[:=]\s*[A-Za-z]+\s+)\S+")
+_BEARER = re.compile(r"(?i)((?:bearer|basic)\s+)\S+")
+# Secret-ish assignments incl. shell (TOKEN=..) and JSON ("api_key": "..").
+_ASSIGNMENT = re.compile(
+    r"(?i)(\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|"
+    r"client[_-]?secret|private[_-]?key|auth|credential)s?[\"']?\s*[=:]\s*[\"']?)"
+    r"([^\s\"',]+)"
+)
+# AWS access key id.
+_AWS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
+# Long base64/hex-ish runs are far more likely a key/token than prose.
 _BASE64 = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])")
 
 
 def redact(text: str) -> str:
-    """Scrub obvious secrets from text. Best-effort, tuned to over-redact."""
+    """Scrub obvious secrets from text. Best-effort, deliberately over-redacts."""
     if not text:
         return text
     text = _redact_env_values(text)
+    text = _PEM.sub(_REDACTED, text)
+    text = _JWT.sub(_REDACTED, text)
+    text = _URL_CRED.sub(r"\g<1>" + _REDACTED + r"\g<3>", text)
+    text = _AUTH_HEADER.sub(r"\g<1>" + _REDACTED, text)
     text = _BEARER.sub(r"\g<1>" + _REDACTED, text)
-    text = _ASSIGNMENT.sub(r"\g<1>\g<2>" + _REDACTED, text)
+    text = _ASSIGNMENT.sub(r"\g<1>" + _REDACTED, text)
+    text = _AWS_KEY.sub(_REDACTED, text)
     text = _BASE64.sub(_REDACTED, text)
     return text
 
 
 def _redact_env_values(text: str) -> str:
     for key, value in os.environ.items():
-        if (
-            len(value) < _ENV_MIN_LEN
-            or key in _SAFE_ENV_KEYS
-            or _looks_like_path(value)
-        ):
+        if key in _SAFE_ENV_KEYS or _looks_like_path(value):
             continue
-        if value in text:
-            text = text.replace(value, _REDACTED)
+        min_len = 4 if _SECRET_ENV_NAME.search(key) else _ENV_MIN_LEN
+        if len(value) < min_len or value not in text:
+            continue
+        text = text.replace(value, _REDACTED)
     return text
 
 
