@@ -53,8 +53,12 @@ jobs:
         # Coverage + JUnit only on one interpreter; Codecov consumes both.
         run: |
           if [ "${{ matrix.python-version }}" = "3.12" ]; then
-            pytest -q --cov=pytest_triage --cov-report=xml --cov-report=term-missing \
-              --junitxml=junit.xml -o junit_family=legacy
+            # coverage run (not pytest --cov): tracing must start before our
+            # entry-point plugin is imported, else its import-time lines read
+            # as uncovered.
+            coverage run -m pytest --junitxml=junit.xml -o junit_family=legacy
+            coverage report
+            coverage xml
           else
             pytest -q
           fi
