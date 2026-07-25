@@ -16,7 +16,12 @@
 
 from __future__ import annotations
 
-from pytest_triage.providers.base import BaseTriageClient, TriageClient
+from pytest_triage.providers.base import (
+    BaseTriageClient,
+    TriageClient,
+    redact_nodeid,
+    render_sections,
+)
 from pytest_triage.registry import PROVIDER_API_VERSION
 from pytest_triage.verdict import Verdict
 
@@ -25,4 +30,6 @@ __all__ = [
     "BaseTriageClient",
     "TriageClient",
     "Verdict",
+    "redact_nodeid",
+    "render_sections",
 ]

@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cross-cutting decorators over TriageClient: budget, cache, wall-clock cap.
+"""Cross-cutting decorators over TriageClient: budget, breaker, cache, timeout.
 
-A third-party provider (~80 lines of transport) gets all three for free by
-being wrapped here. Composition order is Caching(Budgeted(TimedOut(provider))):
-cache hits cost neither budget nor time.
+A third-party provider (~80 lines of transport) gets all of them for free by
+being wrapped here. Composition order is
+Caching(CircuitBreaker(Budgeted(TimedOut(provider)))): cache hits cost neither
+budget nor time, and a tripped breaker costs neither either.
 """
 
 from __future__ import annotations
@@ -40,7 +41,14 @@ if TYPE_CHECKING:
 _PROVIDER_ERROR = "triage provider error"
 _TIMEOUT_REASON = "triage timed out"
 _BUDGET_REASON = "triage budget exhausted"
+_BREAKER_REASON = "triage stopped: the provider kept failing"
 _MAX_ERROR_DETAIL = 200
+
+# A provider that is down stays down for the rest of a run. Without a breaker a
+# 30 s timeout times a 10-call budget is five minutes of a hung suite, with up
+# to ten abandoned requests still being billed. One timeout, or two consecutive
+# errors, is enough evidence to stop paying for the rest.
+_MAX_CONSECUTIVE_ERRORS = 2
 
 
 def _unknown(reason: str) -> Verdict:
@@ -63,7 +71,8 @@ def degraded_reason(verdict: Verdict) -> str | None:
     """
     hypothesis = verdict.hypothesis
     if verdict.category == "unknown" and (
-        hypothesis.startswith(_PROVIDER_ERROR) or hypothesis == _TIMEOUT_REASON
+        hypothesis.startswith(_PROVIDER_ERROR)
+        or hypothesis in (_TIMEOUT_REASON, _BREAKER_REASON)
     ):
         return hypothesis
     return None
@@ -97,33 +106,67 @@ class TimedOutClient:
 
 
 class BudgetedClient:
-    """Cap the number of provider calls per run."""
+    """Cap the number of provider calls per run. `calls` is what was spent."""
 
     def __init__(self, inner: TriageClient, budget: int) -> None:
         self._inner = inner
         self._remaining = budget
+        self.calls = 0
 
     def analyze(self, ctx: FailureContext) -> Verdict:
         if self._remaining <= 0:
             return _unknown(_BUDGET_REASON)
         self._remaining -= 1
+        self.calls += 1
         return self._inner.analyze(ctx)
 
     def close(self) -> None:
         self._inner.close()
 
 
+class CircuitBreakerClient:
+    """Stop calling a provider that has proven it is not going to answer.
+
+    Trips on the first timeout, or on `_MAX_CONSECUTIVE_ERRORS` errors in a row.
+    Sits above the budget so a tripped breaker spends nothing at all.
+    """
+
+    def __init__(self, inner: TriageClient) -> None:
+        self._inner = inner
+        self._consecutive_errors = 0
+        self.tripped = False
+
+    def analyze(self, ctx: FailureContext) -> Verdict:
+        if self.tripped:
+            return _unknown(_BREAKER_REASON)
+        verdict = self._inner.analyze(ctx)
+        if verdict.hypothesis == _TIMEOUT_REASON:
+            self.tripped = True  # a hung provider costs the full cap every call
+        elif verdict.hypothesis.startswith(_PROVIDER_ERROR):
+            self._consecutive_errors += 1
+            self.tripped = self._consecutive_errors >= _MAX_CONSECUTIVE_ERRORS
+        else:
+            self._consecutive_errors = 0
+        return verdict
+
+    def close(self) -> None:
+        self._inner.close()
+
+
 class CachingClient:
-    """Deduplicate by normalized traceback; in-memory for one run."""
+    """Deduplicate identical failures; in-memory for one run. `hits` counts the
+    calls it saved."""
 
     def __init__(self, inner: TriageClient) -> None:
         self._inner = inner
         self._cache: dict[str, Verdict] = {}
+        self.hits = 0
 
     def analyze(self, ctx: FailureContext) -> Verdict:
         key = _cache_key(ctx)
         cached = self._cache.get(key)
         if cached is not None:
+            self.hits += 1
             return cached
         verdict = self._inner.analyze(ctx)
         self._cache[key] = verdict
@@ -140,7 +183,29 @@ _WHITESPACE = re.compile(r"\s+")
 def _cache_key(ctx: FailureContext) -> str:
     # Normalize away volatile bits so identical failures share a verdict.
     normalized = _WHITESPACE.sub(" ", _HEX.sub("0xADDR", ctx.traceback)).strip()
-    return hashlib.sha256(normalized.encode("utf-8", "replace")).hexdigest()
+    # A failure can arrive without a traceback (a broken longrepr, redaction
+    # that scrubbed everything). Falling back to the nodeid keeps distinct
+    # failures apart instead of collapsing them all onto one verdict.
+    identity = normalized or f"{ctx.nodeid}\n{ctx.exc_message or ''}"
+    payload = f"{ctx.exc_type or ''}\n{identity}"
+    return hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+
+
+def call_stats(client: TriageClient) -> tuple[int, int]:
+    """(provider calls spent, verdicts served from cache) over a wrapper chain.
+
+    Walks the decorators built by `build_triage_client`; zeros for a bare
+    provider. What a run actually cost, for the terminal summary.
+    """
+    calls = hits = 0
+    node: object | None = client
+    while node is not None:
+        if isinstance(node, BudgetedClient):
+            calls = node.calls
+        elif isinstance(node, CachingClient):
+            hits = node.hits
+        node = getattr(node, "_inner", None)
+    return calls, hits
 
 
 def build_triage_client(config: Config) -> TriageClient | None:
@@ -153,5 +218,7 @@ def build_triage_client(config: Config) -> TriageClient | None:
         return None
     provider = resolve_provider(config.provider)()
     return CachingClient(
-        BudgetedClient(TimedOutClient(provider, config.timeout), config.budget)
+        CircuitBreakerClient(
+            BudgetedClient(TimedOutClient(provider, config.timeout), config.budget)
+        )
     )

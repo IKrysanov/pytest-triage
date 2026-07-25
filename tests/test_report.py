@@ -97,6 +97,23 @@ def test_report_writer_swallows_write_errors(
     assert "failed to write report" in capsys.readouterr().err
 
 
+def test_report_redacts_secrets_by_default(pytester: pytest.Pytester) -> None:
+    # The core security promise, end-to-end and through the default (strict)
+    # mode: a secret in a failure's traceback never reaches the written report.
+    secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789xy"
+    pytester.makepyfile(
+        f"""
+        def test_leaky():
+            token = "{secret}"  # noqa
+            raise AssertionError("auth failed: authorization: Bearer " + token)
+        """
+    )
+    pytester.runpytest_inprocess(str(pytester.path), "--ai-report=report.json")
+    text = (pytester.path / "report.json").read_text(encoding="utf-8")
+    assert secret not in text  # scrubbed from traceback and message
+    assert "[REDACTED]" in text  # ...and the marker proves redaction ran
+
+
 def test_report_written_and_valid(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(
         """

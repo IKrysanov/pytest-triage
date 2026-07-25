@@ -21,6 +21,7 @@ must leave the run byte-identical to a run without triage.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -30,8 +31,10 @@ from pytest_triage.verdict import Verdict
 from pytest_triage.wrappers import (
     BudgetedClient,
     CachingClient,
+    CircuitBreakerClient,
     TimedOutClient,
     build_triage_client,
+    call_stats,
     degraded_reason,
 )
 from tests.support import run_triage
@@ -73,6 +76,25 @@ class _SlowClient:
     def analyze(self, ctx: FailureContext) -> Verdict:
         time.sleep(5)  # far beyond the test timeout; the daemon thread is abandoned
         return _OK
+
+    def close(self) -> None:
+        pass
+
+
+class _ErrorAfter:
+    """Raises on every call except the ones listed in `succeed_on` (by index)."""
+
+    def __init__(self, inner: _CountingClient, *succeed_on: int) -> None:
+        self._inner = inner
+        self._succeed_on = succeed_on
+        self._seen = -1
+
+    def analyze(self, ctx: FailureContext) -> Verdict:
+        self._seen += 1
+        verdict = self._inner.analyze(ctx)
+        if self._seen in self._succeed_on:
+            return verdict
+        raise RuntimeError("provider exploded")
 
     def close(self) -> None:
         pass
@@ -183,6 +205,86 @@ def test_cache_delegates_close() -> None:
     assert inner.closed == 1
 
 
+def test_cache_keeps_tracebackless_failures_apart() -> None:
+    # Without a traceback there is nothing to dedup on; distinct failures must
+    # not collapse onto one verdict just because both tracebacks are empty.
+    inner = _CountingClient()
+    client = CachingClient(inner)
+    client.analyze(_ctx(traceback="", nodeid="t.py::a"))
+    client.analyze(_ctx(traceback="", nodeid="t.py::b"))
+    assert inner.calls == 2
+
+
+def test_cache_distinguishes_exception_types() -> None:
+    inner = _CountingClient()
+    client = CachingClient(inner)
+    base = _ctx(traceback="", nodeid="t.py::a")
+    client.analyze(replace(base, exc_type="ValueError"))
+    client.analyze(replace(base, exc_type="ConnectionError"))
+    assert inner.calls == 2
+
+
+# --- CircuitBreakerClient -------------------------------------------------
+
+
+def test_breaker_trips_on_the_first_timeout() -> None:
+    # A hung provider costs the full wall-clock cap on every remaining failure.
+    client = CircuitBreakerClient(TimedOutClient(_SlowClient(), timeout=0.01))
+    assert client.analyze(_ctx()).hypothesis == "triage timed out"
+    assert client.tripped
+
+
+def test_tripped_breaker_never_reaches_the_provider() -> None:
+    inner = _CountingClient()
+    client = CircuitBreakerClient(inner)
+    client.tripped = True
+    assert client.analyze(_ctx()).category == "unknown"
+    assert inner.calls == 0
+
+
+def test_breaker_trips_after_two_consecutive_provider_errors() -> None:
+    inner = _CountingClient()
+    client = CircuitBreakerClient(TimedOutClient(_ErrorAfter(inner), timeout=5.0))
+    for _ in range(5):
+        client.analyze(_ctx())
+    assert client.tripped
+    assert inner.calls == 2  # stopped paying after the second failure in a row
+
+
+def test_breaker_resets_after_a_good_verdict() -> None:
+    inner = _CountingClient()
+    client = CircuitBreakerClient(TimedOutClient(_ErrorAfter(inner, 1), timeout=5.0))
+    client.analyze(_ctx())  # error
+    client.analyze(_ctx())  # success -> streak reset
+    client.analyze(_ctx())  # error
+    assert not client.tripped
+
+
+def test_breaker_reason_is_surfaced_and_delegates_close() -> None:
+    inner = _CountingClient()
+    client = CircuitBreakerClient(inner)
+    client.tripped = True
+    assert degraded_reason(client.analyze(_ctx())) is not None
+    client.close()
+    assert inner.closed == 1
+
+
+# --- call_stats -----------------------------------------------------------
+
+
+def test_call_stats_reports_calls_and_cache_hits() -> None:
+    inner = _CountingClient()
+    client = CachingClient(CircuitBreakerClient(BudgetedClient(inner, budget=10)))
+    client.analyze(_ctx(traceback="same"))
+    client.analyze(_ctx(traceback="same"))
+    client.analyze(_ctx(traceback="other"))
+    assert call_stats(client) == (2, 1)
+
+
+def test_call_stats_is_zero_for_a_bare_provider() -> None:
+    assert call_stats(_CountingClient()) == (0, 0)
+
+
 # --- build_triage_client --------------------------------------------------
 
 
@@ -288,6 +390,60 @@ def test_raising_provider_yields_unknown_inprocess(
     assert "boom" in verdict.hypothesis  # real cause, not a silent unknown
     # ...and it is surfaced loudly in the terminal, not just buried in the report.
     result.stdout.fnmatch_lines(["*pytest-triage: triage provider error*boom*"])
+
+
+def test_broken_provider_is_called_at_most_twice(pytester: pytest.Pytester) -> None:
+    # Money: a provider that is down stays down. Ten failures must not become
+    # ten billed calls, whatever the budget says.
+    pytester.syspathinsert()
+    counter = pytester.path / "calls.txt"
+    pytester.makepyfile(
+        _prov_breaker=f"""
+        import pathlib
+
+        COUNTER = pathlib.Path({str(counter)!r})
+
+        class BrokenClient:
+            def analyze(self, ctx):
+                with COUNTER.open("a") as handle:
+                    handle.write("x")
+                raise RuntimeError("upstream is down")
+
+            def close(self):
+                pass
+        """
+    )
+    pytester.makepyfile(
+        test_many="\n".join(
+            f"def test_{index}():\n    assert {index} == -1\n" for index in range(10)
+        )
+    )
+    spy, result = run_triage(
+        pytester,
+        "--ai-triage=on",
+        "--ai-provider=_prov_breaker:BrokenClient",
+        "--ai-budget=10",
+    )
+    result.assert_outcomes(failed=10)
+    assert len(spy.verdicts) == 10
+    assert counter.read_text() == "xx"
+
+
+def test_terminal_summary_reports_cost(pytester: pytest.Pytester) -> None:
+    pytester.makepyfile(
+        test_cost="""
+        def test_a():
+            assert 1 == 2
+
+        def test_b():
+            raise ConnectionError("nope")
+        """
+    )
+    result = pytester.runpytest_inprocess(
+        str(pytester.path), "--ai-triage=on", "--ai-provider=fake"
+    )
+    result.assert_outcomes(failed=2)
+    result.stdout.fnmatch_lines(["*pytest-triage: 2 provider call(s), 0 from cache*"])
 
 
 def test_terminal_summary_reports_verdict_counts(pytester: pytest.Pytester) -> None:

@@ -96,3 +96,28 @@ def test_aws_access_key_redacted() -> None:
 def test_short_secret_named_env_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_TOKEN", "x1y2z")  # short, but the name signals a secret
     assert "x1y2z" not in redact("leaked x1y2z here")
+
+
+def test_quoted_authorization_header_redacted() -> None:
+    # An SDK error message usually carries a repr of the header mapping rather
+    # than a raw header line.
+    text = "401 https://api.example/v1: Headers({'authorization': 'Token abc123xyz'})"
+    assert "abc123xyz" not in redact(text)
+
+
+def test_authorization_header_without_a_scheme_redacted() -> None:
+    assert "sk-live-9f2" not in redact("authorization: sk-live-9f2")
+
+
+def test_jwe_with_five_segments_redacted() -> None:
+    # GigaChat access tokens are JWE: five segments, and some may be empty.
+    jwe = "eyJjdHkiOiJqd3QiLCJhbGciOiJSU0EtT0FFUCJ9..dGVzdA.cGF5bG9hZA.dGFn"
+    result = redact(f"token={jwe} expired")
+    assert "cGF5bG9hZA" not in result
+    assert "[REDACTED]" in result
+
+
+def test_gigachat_credentials_env_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", "ZmFrZS1jbGllbnQ6ZmFrZS1zZWNyZXQ=")
+    leaked = redact("auth failed for ZmFrZS1jbGllbnQ6ZmFrZS1zZWNyZXQ= at startup")
+    assert "ZmFrZS1jbGllbnQ" not in leaked

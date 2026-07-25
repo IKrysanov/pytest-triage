@@ -27,7 +27,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from pytest_triage.providers.base import BaseTriageClient
+from pytest_triage.providers.base import (
+    BaseTriageClient,
+    redact_nodeid,
+    render_sections,
+)
 
 if TYPE_CHECKING:
     from pytest_triage.context import FailureContext
@@ -101,13 +105,15 @@ class AnthropicClient(BaseTriageClient):
         )
 
     def _render_prompt(self, ctx: FailureContext) -> str:
-        return (
-            f"nodeid: {ctx.nodeid}\n"
-            f"phase: {ctx.phase}\n"
-            f"exception: {ctx.exc_type}: {ctx.exc_message}\n"
-            f"traceback:\n{ctx.traceback}\n"
-            f"stdout tail:\n{ctx.stdout_tail}\n"
-            f"stderr tail:\n{ctx.stderr_tail}\n"
+        return render_sections(
+            [
+                ("nodeid: ", redact_nodeid(ctx.nodeid)),
+                ("phase: ", ctx.phase),
+                ("exception: ", f"{ctx.exc_type}: {ctx.exc_message}"),
+                ("traceback:\n", ctx.traceback),
+                ("stdout tail:\n", ctx.stdout_tail),
+                ("stderr tail:\n", ctx.stderr_tail),
+            ]
         )
 
     def _request(self, prompt: str) -> str:
