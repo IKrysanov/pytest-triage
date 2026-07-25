@@ -45,14 +45,14 @@ thousand lines of traceback.
 - [Configuration](#configuration)
 - [Providers](#providers)
   - [Anthropic](#anthropic)
-  - [GigaChat](#gigachat-for-the-ru-segment)
+  - [GigaChat (for the RU segment)](#gigachat-for-the-ru-segment)
 - [What a run costs](#what-a-run-costs)
 - [Write your own provider](#write-your-own-provider)
 - [How it works](#how-it-works)
 - [Safety: the four invariants](#safety-the-four-invariants)
 - [Using it from Airflow](#using-it-from-airflow)
 - [Development](#development)
-- [Scope of 0.1.0](#scope-of-010)
+- [Scope of 0.1.x](#scope-of-01x)
 - [License](#license)
 
 ## Why
@@ -518,7 +518,7 @@ pytest_terminal_summary ────►  "pytest-triage: 1 env, 2 test_bug"
   `pytest_triage_report` implementer that raises.
 - **Under xdist**, triage and reporting run on the controller only; workers return
   from `pytest_configure` before a provider is ever built. Worker-failure
-  aggregation is out of scope for 0.1.0, and a report run under `-n` warns and
+  aggregation is out of scope for 0.1.x, and a report run under `-n` warns and
   stays empty.
 
 ## Safety: the four invariants

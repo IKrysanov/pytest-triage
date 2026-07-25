@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-25
+
 ### Added
 
 - `GigaChatClient` (optional `[gigachat]` extra): triage via GigaChat for the RU
@@ -25,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run's spend is visible without instrumenting the provider.
 - `redact_nodeid` and `render_sections` are public at `pytest_triage.providers`,
   so a third-party provider inherits nodeid scrubbing and empty-section trimming.
+- Report roll-up (additive, `schema_version` stays `1`): `ai_model`,
+  `triage_duration`, `total_failures` and `total_verdicts` at the top level, so a
+  consumer can tell which model produced the verdicts and what the pass cost
+  without walking `failures`. All are `null`/`0` when triage did not run.
+- `examples/` — a suite where every test fails for a different, believable
+  reason, plus two committed sample reports (`claude-sonnet-5` and
+  `GigaChat-2-Max`) for comparing providers on identical failures.
 
 ### Changed
 
@@ -81,5 +90,6 @@ First public release. Fully opt-in: installing the plugin changes no existing su
   (3.10–3.13), CodeQL, Scorecard, DCO, Dependabot, Codecov, and a Trusted-Publishing
   release with Sigstore attestations.
 
-[Unreleased]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/IKrysanov/pytest-triage/releases/tag/v0.1.0

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytest-triage"
-version = "0.1.0"
+version = "0.1.1"
 description = "Structured failure triage for pytest, with optional LLM verdicts."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -52,6 +52,13 @@ gigachat = "pytest_triage.providers.gigachat:GigaChatClient"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pytest_triage"]
+
+# certs/ holds local TLS trust bundles and is git-ignored. Hatchling reads the
+# ignore rules differently and would otherwise ship certs/README.md, making the
+# sdist depend on what happens to be on the builder's disk. A bare "certs" does
+# not match here — the pattern has to reach the files.
+[tool.hatch.build.targets.sdist]
+exclude = ["certs/**"]
 
 [tool.ruff]
 target-version = "py310"
