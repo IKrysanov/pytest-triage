@@ -16,7 +16,10 @@
 
 from __future__ import annotations
 
+import json
+
 from pytest_triage.context import FailureContext
+from pytest_triage.providers import redact_nodeid, render_sections
 from pytest_triage.providers.base import BaseTriageClient
 from pytest_triage.providers.fake import FakeTriageClient, OAuthFakeClient
 from pytest_triage.testing import assert_conforms
@@ -106,3 +109,55 @@ def test_base_template_invalid_values_fall_back() -> None:
     verdict = _EchoClient(raw).analyze(_ctx())
     assert verdict.category == "unknown"
     assert verdict.confidence == "low"
+
+
+def test_base_template_caps_a_runaway_model() -> None:
+    raw = json.dumps(
+        {
+            "category": "env",
+            "confidence": "low",
+            "hypothesis": "h" * 5000,
+            "suggested_fix": "f" * 5000,
+        }
+    )
+    verdict = _EchoClient(raw).analyze(_ctx())
+    assert len(verdict.hypothesis) < 1000
+    assert verdict.suggested_fix is not None
+    assert "truncated" in verdict.suggested_fix
+
+
+# --- prompt helpers (public for provider authors) -------------------------
+
+
+def test_render_sections_drops_empty_values() -> None:
+    rendered = render_sections(
+        [("a: ", "1"), ("b: ", ""), ("c:\n", "3")],
+    )
+    assert rendered == "a: 1\nc:\n3\n"
+
+
+def test_redact_nodeid_scrubs_only_the_parametrization() -> None:
+    secret = "AbCdEf0123456789abcdefXY"
+    scrubbed = redact_nodeid(f"tests/test_auth.py::test_login[{secret}]")
+    assert secret not in scrubbed
+    assert scrubbed.startswith("tests/test_auth.py::test_login[")
+
+
+def test_redact_nodeid_leaves_a_plain_nodeid_alone() -> None:
+    nodeid = "tests/test_verylongmodulename.py::test_averylongfunctionname"
+    assert redact_nodeid(nodeid) == nodeid
+
+
+def test_base_prompt_skips_missing_context() -> None:
+    class _Capturing(BaseTriageClient):
+        prompt = ""
+
+        def _request(self, prompt: str) -> str:
+            type(self).prompt = prompt
+            return ""
+
+    bare = FailureContext(nodeid="t.py::a", phase="call", outcome="failed")
+    _Capturing().analyze(bare)
+    assert "traceback" not in _Capturing.prompt
+    assert "exception" not in _Capturing.prompt
+    assert "nodeid: t.py::a" in _Capturing.prompt

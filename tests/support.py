@@ -35,6 +35,8 @@ class TriageSpy:
     def __init__(self) -> None:
         self.failures: list[FailureContext] = []
         self.verdicts: list[Verdict | None] = []
+        self.duration: float | None = None
+        self.model: str | None = None
         self.triage_config: Config | None = None
 
     @pytest.hookimpl(optionalhook=True)
@@ -42,10 +44,14 @@ class TriageSpy:
         self,
         failures: list[FailureContext],
         verdicts: list[Verdict | None],
+        duration: float | None,
+        model: str | None,
         triage_config: Config,
     ) -> None:
         self.failures = list(failures)
         self.verdicts = list(verdicts)
+        self.duration = duration
+        self.model = model
         self.triage_config = triage_config
 
 

@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import contextlib
+import sys
+import time
 from collections import Counter
 from typing import TYPE_CHECKING
 
@@ -27,7 +29,12 @@ from pytest_triage.config import Config
 from pytest_triage.context import FailureContext, build_context, safe_message
 from pytest_triage.report import _ReportWriter
 from pytest_triage.verdict import Verdict
-from pytest_triage.wrappers import build_triage_client, degraded_reason
+from pytest_triage.wrappers import (
+    build_triage_client,
+    call_stats,
+    degraded_reason,
+    provider_model,
+)
 
 if TYPE_CHECKING:
     from pytest_triage.providers.base import TriageClient
@@ -94,6 +101,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    if hasattr(config, "workerinput"):
+        # xdist worker: the controller owns triage and the report. Building a
+        # provider here would authenticate once per worker and collect failures
+        # nobody reads.
+        return
     resolved = Config.from_config(config)
     _warn_if_triage_misconfigured(config, resolved)
     client = _build_triage_client_or_warn(config, resolved)
@@ -164,6 +176,9 @@ class _TriagePlugin:
         self._failures: list[FailureContext] = []
         self._summary_counts: Counter[str] = Counter()
         self._triage_errors: list[str] = []
+        self._cost: tuple[int, int] = (0, 0)
+        self._triage_duration: float | None = None
+        self._triage_model = provider_model(client)
 
     def pytest_exception_interact(
         self,
@@ -175,27 +190,42 @@ class _TriagePlugin:
         # so collection happens here.
         if not isinstance(report, pytest.TestReport) or not report.failed:
             return
+        try:
+            self._failures.append(self._collect(call, report))
+        except Exception as exc:  # invariant 1: collection never breaks a run
+            print(
+                f"pytest-triage: failed to collect "
+                f"{getattr(report, 'nodeid', '<unknown>')}: {exc}",
+                file=sys.stderr,
+            )
+
+    def _collect(
+        self, call: pytest.CallInfo[object], report: pytest.TestReport
+    ) -> FailureContext:
         excinfo = call.excinfo
         exc_type = excinfo.type.__name__ if excinfo is not None else None
         exc_message = safe_message(excinfo.value) if excinfo is not None else None
-        self._failures.append(
-            build_context(
-                report,
-                exc_type=exc_type,
-                exc_message=exc_message,
-                redact_mode=self._config.redact,
-            )
+        return build_context(
+            report,
+            exc_type=exc_type,
+            exc_message=exc_message,
+            redact_mode=self._config.redact,
         )
 
     def pytest_sessionfinish(self, session: pytest.Session) -> None:
         if hasattr(session.config, "workerinput"):
             return  # xdist worker: the controller aggregates and reports
         verdicts = self._triage()
-        session.config.hook.pytest_triage_report(
-            failures=list(self._failures),
-            verdicts=verdicts,
-            triage_config=self._config,
-        )
+        try:
+            session.config.hook.pytest_triage_report(
+                failures=list(self._failures),
+                verdicts=verdicts,
+                duration=self._triage_duration,
+                model=self._triage_model,
+                triage_config=self._config,
+            )
+        except Exception as exc:  # a hook implementer must not change the run
+            print(f"pytest-triage: report hook failed: {exc}", file=sys.stderr)
 
     def _triage(self) -> list[Verdict | None]:
         """Analyze every failure; always returns len(failures).
@@ -209,6 +239,7 @@ class _TriagePlugin:
         verdicts: list[Verdict | None] = []
         counts: Counter[str] = Counter()
         errors: list[str] = []
+        start = time.perf_counter()
         try:
             for failure in self._failures:
                 try:
@@ -226,6 +257,9 @@ class _TriagePlugin:
                 if reason is not None:
                     errors.append(reason)
         finally:
+            self._triage_duration = time.perf_counter() - start
+            with contextlib.suppress(Exception):
+                self._cost = call_stats(client)
             with contextlib.suppress(Exception):
                 client.close()
         self._summary_counts = counts
@@ -241,6 +275,10 @@ class _TriagePlugin:
                 for category, count in sorted(self._summary_counts.items())
             )
             terminalreporter.write_line(f"pytest-triage: {summary}")
+            calls, hits = self._cost
+            terminalreporter.write_line(
+                f"pytest-triage: {calls} provider call(s), {hits} from cache"
+            )
         # Explain any degraded verdict (e.g. a bad key); deduplicated, non-fatal.
         for reason in dict.fromkeys(self._triage_errors):
             terminalreporter.write_line(f"pytest-triage: {reason}", yellow=True)

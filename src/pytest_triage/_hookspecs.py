@@ -27,12 +27,16 @@ if TYPE_CHECKING:
 def pytest_triage_report(
     failures: list[FailureContext],
     verdicts: list[Verdict | None],
+    duration: float | None,
+    model: str | None,
     triage_config: Config,
 ) -> None:
     """Fire once on the controller after collection.
 
     `verdicts` is aligned with `failures` (one entry each); an entry is None when
-    triage is disabled. Notification hook: every implementer runs. The JSON
-    report writer and downstream consumers implement this. By default nothing
-    does, so a run stays byte-identical to one without the plugin (invariant 2).
+    triage is disabled. `duration` is the seconds spent triaging, `model` the
+    provider's model name — both None when triage did not run. Notification hook:
+    every implementer runs. The JSON report writer and downstream consumers
+    implement this. By default nothing does, so a run stays byte-identical to one
+    without the plugin (invariant 2).
     """

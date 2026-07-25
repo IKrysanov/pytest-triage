@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytest-triage"
-version = "0.1.0"
+version = "0.1.1"
 description = "Structured failure triage for pytest, with optional LLM verdicts."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,6 +34,7 @@ dev = [
     "ruff>=0.4",
 ]
 anthropic = ["anthropic>=0.40"]
+gigachat = ["gigachat>=0.2.1"]
 
 [project.urls]
 Homepage = "https://github.com/IKrysanov/pytest-triage"
@@ -47,9 +48,17 @@ pytest_triage = "pytest_triage.plugin"
 fake = "pytest_triage.providers.fake:FakeTriageClient"
 oauth-fake = "pytest_triage.providers.fake:OAuthFakeClient"
 anthropic = "pytest_triage.providers.anthropic:AnthropicClient"
+gigachat = "pytest_triage.providers.gigachat:GigaChatClient"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pytest_triage"]
+
+# certs/ holds local TLS trust bundles and is git-ignored. Hatchling reads the
+# ignore rules differently and would otherwise ship certs/README.md, making the
+# sdist depend on what happens to be on the builder's disk. A bare "certs" does
+# not match here — the pattern has to reach the files.
+[tool.hatch.build.targets.sdist]
+exclude = ["certs/**"]
 
 [tool.ruff]
 target-version = "py310"
@@ -59,15 +68,21 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "C4", "PTH", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# The GigaChat prompt is deliberately Russian; RUF001-003 flag every Cyrillic
+# character as an "ambiguous" Latin lookalike, which is the whole file.
+"src/pytest_triage/providers/gigachat.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_gigachat.py" = ["RUF001", "RUF002", "RUF003"]
+
 [tool.mypy]
 python_version = "3.10"
 strict = true
 files = ["src", "tests", "conftest.py"]
 
-# The anthropic SDK is an optional extra, not installed in CI; treat it as
-# untyped rather than failing the type check when it is absent.
+# The provider SDKs are optional extras, not installed in CI; treat them as
+# untyped rather than failing the type check when they are absent.
 [[tool.mypy.overrides]]
-module = ["anthropic", "anthropic.*"]
+module = ["anthropic", "anthropic.*", "gigachat", "gigachat.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

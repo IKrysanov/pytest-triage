@@ -31,6 +31,7 @@ from pytest_triage.context import (
 from pytest_triage.plugin import (
     _TriagePlugin,
     _warn_if_report_incomplete_under_xdist,
+    pytest_configure,
 )
 from pytest_triage.verdict import Verdict
 
@@ -256,3 +257,51 @@ def test_no_xdist_warning_on_worker() -> None:
     cfg = _FakeConfig()
     _warn_if_report_incomplete_under_xdist(cast("pytest.Config", cfg))
     assert cfg.warnings == []
+
+
+def test_configure_does_nothing_on_an_xdist_worker() -> None:
+    # A worker must not build a provider: that is one extra authentication and
+    # one extra set of billed calls per worker, for failures nobody reads.
+    class _WorkerConfig:
+        workerinput = "gw0"  # only presence matters (the hasattr guard)
+
+    # No pluginmanager, no getini: reaching any of them would raise here.
+    pytest_configure(cast("pytest.Config", _WorkerConfig()))
+
+
+def test_collector_survives_a_broken_report(capsys: pytest.CaptureFixture[str]) -> None:
+    # invariant 1: a report whose longrepr cannot be rendered must not take the
+    # test run down with it.
+    class _BrokenReport(pytest.TestReport):
+        @property
+        def longreprtext(self) -> str:
+            raise RuntimeError("longrepr is broken")
+
+    report = _make_report("x")
+    report.__class__ = _BrokenReport
+    plugin = _TriagePlugin(Config(), None)
+    call = cast(
+        "pytest.CallInfo[object]",
+        pytest.CallInfo.from_call(lambda: None, when="call"),
+    )
+    plugin.pytest_exception_interact(call=call, report=report)
+    assert plugin._failures == []
+    assert "failed to collect" in capsys.readouterr().err
+
+
+def test_report_hook_failure_never_escapes(capsys: pytest.CaptureFixture[str]) -> None:
+    # A third-party pytest_triage_report implementer (airflow-pytest-operator,
+    # a CI shim) that raises must not change the run's exit code.
+    class _Hook:
+        def pytest_triage_report(self, **kwargs: object) -> None:
+            raise RuntimeError("downstream consumer blew up")
+
+    class _Config:
+        hook = _Hook()
+
+    class _Session:
+        config = _Config()
+
+    plugin = _TriagePlugin(Config(), None)
+    plugin.pytest_sessionfinish(cast("pytest.Session", _Session()))
+    assert "report hook failed" in capsys.readouterr().err

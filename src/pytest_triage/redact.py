@@ -67,15 +67,21 @@ _PEM = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
     re.DOTALL,
 )
-# JWTs: three base64url segments joined by dots (the eyJ header is base64 '{"').
-_JWT = re.compile(r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+# JWT/JWE: base64url segments joined by dots (the eyJ header is base64 '{"').
+# 3 segments is a signed JWT, 5 an encrypted JWE (GigaChat access tokens are
+# JWE, and its middle segments may be empty).
+_JWT = re.compile(r"eyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*){2,4}")
 # Credentials embedded in a URL: scheme://user:PASSWORD@host. Quantifiers are
 # bounded so a long non-URL run cannot trigger quadratic scanning.
 _URL_CRED = re.compile(
     r"([a-zA-Z][\w+.\-]{0,39}://[^\s:/@]{1,256}:)([^\s@/]{1,256})(@)"
 )
-# HTTP auth header (any scheme) and inline bearer/basic tokens.
-_AUTH_HEADER = re.compile(r"(?i)(authorization\s*[:=]\s*[A-Za-z]+\s+)\S+")
+# HTTP auth header (any scheme, scheme optional) and inline bearer/basic tokens.
+# The quotes matter: an SDK error often carries a repr of the header mapping
+# ({'authorization': 'Bearer ey...'}), which the unquoted pattern missed.
+_AUTH_HEADER = re.compile(
+    r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?(?:[A-Za-z]+\s+)?)\S+"
+)
 _BEARER = re.compile(r"(?i)((?:bearer|basic)\s+)\S+")
 # Secret-ish assignments incl. shell (TOKEN=..) and JSON ("api_key": "..").
 _ASSIGNMENT = re.compile(

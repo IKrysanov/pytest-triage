@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-25
+
+### Added
+
+- `GigaChatClient` (optional `[gigachat]` extra): triage via GigaChat for the RU
+  segment. The system prompt is Russian and `hypothesis` / `suggested_fix` come
+  back in Russian; `category` and `confidence` stay English, as the `Verdict`
+  contract requires. Forces the `record_verdict` function call and falls back to
+  parsing a plain-text JSON answer for deployments that ignore a forced call.
+  Lazily imported, retries disabled, model via `GIGACHAT_MODEL` (default
+  `GigaChat` Lite); credentials, scope and TLS trust are read by the SDK from the
+  `GIGACHAT_*` environment and never handled by the plugin.
+- `CircuitBreakerClient`: triage stops for the rest of the run after the first
+  timeout or two consecutive provider errors. A provider that is down can no
+  longer spend the whole budget, and a hung one can no longer turn
+  `budget × timeout` into a five-minute suite.
+- Terminal cost line — `pytest-triage: 2 provider call(s), 1 from cache` — so a
+  run's spend is visible without instrumenting the provider.
+- `redact_nodeid` and `render_sections` are public at `pytest_triage.providers`,
+  so a third-party provider inherits nodeid scrubbing and empty-section trimming.
+- Report roll-up (additive, `schema_version` stays `1`): `ai_model`,
+  `triage_duration`, `total_failures` and `total_verdicts` at the top level, so a
+  consumer can tell which model produced the verdicts and what the pass cost
+  without walking `failures`. All are `null`/`0` when triage did not run.
+- `examples/` — a suite where every test fails for a different, believable
+  reason, plus two committed sample reports (`claude-sonnet-5` and
+  `GigaChat-2-Max`) for comparing providers on identical failures.
+
+### Changed
+
+- The Anthropic model is now selected with `ANTHROPIC_MODEL` instead of
+  `PYTEST_TRIAGE_MODEL`. Each provider reads its own model variable
+  (`ANTHROPIC_MODEL`, `GIGACHAT_MODEL`), so there is no cross-provider model
+  environment variable left to clash.
+
+### Fixed
+
+- **Invariant 1**: an exception while collecting a failure's context, or a
+  third-party `pytest_triage_report` implementer that raises, escaped
+  `pytest_exception_interact` / `pytest_sessionfinish` and could change the run's
+  exit code. Both are now fenced and reported on stderr.
+- **Secret leak**: a parametrized `nodeid` (`test_login[sk-live-...]`) was sent to
+  the provider verbatim. The `[...]` section is now redacted in the prompt; the
+  report keeps the raw nodeid, which is the rerun selector.
+- **Secret leak**: `Authorization` headers were only redacted in raw header form,
+  not in the `Headers({'authorization': '...'})` repr that SDK errors carry, and
+  the JWT pattern missed five-segment JWEs (GigaChat access tokens).
+- **Wasted spend**: xdist workers built their own provider client in
+  `pytest_configure` and collected failures nobody read — one extra
+  authentication per worker. Workers now return early.
+- **Wasted spend**: prompts always carried `stdout tail:` / `stderr tail:`
+  sections even when empty, billing tokens for nothing on every call.
+- Cache key: failures without a traceback all collapsed onto a single verdict.
+  The key now includes the exception type and falls back to the nodeid.
+- A model returning an unbounded `hypothesis` or `suggested_fix` wrote it
+  straight into the report; verdict text is now truncated by bytes with a marker.
+
 ## [0.1.0] - 2026-07-23
 
 First public release. Fully opt-in: installing the plugin changes no existing suite.
@@ -33,5 +90,6 @@ First public release. Fully opt-in: installing the plugin changes no existing su
   (3.10–3.13), CodeQL, Scorecard, DCO, Dependabot, Codecov, and a Trusted-Publishing
   release with Sigstore attestations.
 
-[Unreleased]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/IKrysanov/pytest-triage/releases/tag/v0.1.0
