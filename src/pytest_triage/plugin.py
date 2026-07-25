@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import sys
+import time
 from collections import Counter
 from typing import TYPE_CHECKING
 
@@ -28,7 +29,12 @@ from pytest_triage.config import Config
 from pytest_triage.context import FailureContext, build_context, safe_message
 from pytest_triage.report import _ReportWriter
 from pytest_triage.verdict import Verdict
-from pytest_triage.wrappers import build_triage_client, call_stats, degraded_reason
+from pytest_triage.wrappers import (
+    build_triage_client,
+    call_stats,
+    degraded_reason,
+    provider_model,
+)
 
 if TYPE_CHECKING:
     from pytest_triage.providers.base import TriageClient
@@ -171,6 +177,8 @@ class _TriagePlugin:
         self._summary_counts: Counter[str] = Counter()
         self._triage_errors: list[str] = []
         self._cost: tuple[int, int] = (0, 0)
+        self._triage_duration: float | None = None
+        self._triage_model = provider_model(client)
 
     def pytest_exception_interact(
         self,
@@ -212,6 +220,8 @@ class _TriagePlugin:
             session.config.hook.pytest_triage_report(
                 failures=list(self._failures),
                 verdicts=verdicts,
+                duration=self._triage_duration,
+                model=self._triage_model,
                 triage_config=self._config,
             )
         except Exception as exc:  # a hook implementer must not change the run
@@ -229,6 +239,7 @@ class _TriagePlugin:
         verdicts: list[Verdict | None] = []
         counts: Counter[str] = Counter()
         errors: list[str] = []
+        start = time.perf_counter()
         try:
             for failure in self._failures:
                 try:
@@ -246,6 +257,7 @@ class _TriagePlugin:
                 if reason is not None:
                     errors.append(reason)
         finally:
+            self._triage_duration = time.perf_counter() - start
             with contextlib.suppress(Exception):
                 self._cost = call_stats(client)
             with contextlib.suppress(Exception):

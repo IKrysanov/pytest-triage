@@ -36,6 +36,7 @@ from pytest_triage.wrappers import (
     build_triage_client,
     call_stats,
     degraded_reason,
+    provider_model,
 )
 from tests.support import run_triage
 
@@ -285,6 +286,30 @@ def test_call_stats_is_zero_for_a_bare_provider() -> None:
     assert call_stats(_CountingClient()) == (0, 0)
 
 
+def test_provider_model_reads_through_the_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _WithModel:
+        model = "test-model-1"
+
+        def analyze(self, ctx: FailureContext) -> Verdict:
+            return _OK
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "pytest_triage.wrappers.resolve_provider", lambda spec: _WithModel
+    )
+    client = build_triage_client(Config(triage=True, provider="x"))
+    assert provider_model(client) == "test-model-1"
+
+
+def test_provider_model_none_for_bare_or_modelless() -> None:
+    assert provider_model(None) is None
+    assert provider_model(_CountingClient()) is None  # no `model` attribute
+
+
 # --- build_triage_client --------------------------------------------------
 
 
@@ -318,6 +343,27 @@ def test_factory_budget_is_enforced_end_to_end() -> None:
     second = client.analyze(_ctx(traceback="b", nodeid="t.py::b"))
     assert first.category != "unknown"
     assert second.category == "unknown"  # budget of 1 spent on the first failure
+
+
+def test_breaker_caps_a_dead_provider_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Load contract through the real factory: a provider that always fails burns
+    # only enough budget to trip the breaker, not the whole cap.
+    class _Dead:
+        def analyze(self, ctx: FailureContext) -> Verdict:
+            raise RuntimeError("upstream 500")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("pytest_triage.wrappers.resolve_provider", lambda spec: _Dead)
+    client = build_triage_client(Config(triage=True, provider="dead", budget=10))
+    assert client is not None
+    for i in range(20):
+        client.analyze(_ctx(traceback=f"tb{i}", nodeid=f"t::{i}"))
+    calls, _ = call_stats(client)
+    assert calls == 2  # tripped after two consecutive errors, not the full budget
 
 
 # --- Invariant 1: triage never affects the run ----------------------------

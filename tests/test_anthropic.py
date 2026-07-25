@@ -147,11 +147,14 @@ def test_close_closes_client(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_model_defaults_and_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_anthropic(monkeypatch, [])
-    monkeypatch.delenv("PYTEST_TRIAGE_MODEL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
     assert AnthropicClient()._model == "claude-sonnet-5"
-    monkeypatch.setenv("PYTEST_TRIAGE_MODEL", "claude-haiku-4-5")
+    assert AnthropicClient().model == "claude-sonnet-5"  # public, for the report
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-haiku-4-5")  # provider-specific env
     assert AnthropicClient()._model == "claude-haiku-4-5"
-    assert AnthropicClient(model="claude-opus-4-8")._model == "claude-opus-4-8"
+    assert (
+        AnthropicClient(model="claude-opus-4-8")._model == "claude-opus-4-8"
+    )  # arg wins
 
 
 def test_conforms(monkeypatch: pytest.MonkeyPatch) -> None:

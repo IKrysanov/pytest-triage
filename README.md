@@ -44,6 +44,8 @@ thousand lines of traceback.
 - [The report](#the-report)
 - [Configuration](#configuration)
 - [Providers](#providers)
+  - [Anthropic](#anthropic)
+  - [GigaChat](#gigachat-for-the-ru-segment)
 - [What a run costs](#what-a-run-costs)
 - [Write your own provider](#write-your-own-provider)
 - [How it works](#how-it-works)
@@ -133,6 +135,18 @@ real model. After any triaged run you also get a one-line terminal summary:
 pytest-triage: 1 env, 2 test_bug
 ```
 
+**New here? Try it on failures that fail on purpose.** [`examples/`](examples/) is
+a small suite where every test breaks for a *different, believable* reason — a
+real server `500`, a wrong assertion, a product bug, a DNS timeout — so you can
+see what each verdict looks like before pointing it at your own suite:
+
+```bash
+pip install requests            # the examples make real HTTP calls
+pytest examples/ --ai-triage=on --ai-provider=fake --ai-report=.triage.json
+```
+
+Swap `fake` for `anthropic` or `gigachat` (with a key) to compare real verdicts.
+
 ## The report
 
 The report is a single JSON object with a **versioned schema** (`schema_version`)
@@ -142,6 +156,8 @@ that only ever grows. One failure looks like this:
 {
   "schema_version": 1,
   "created_at": "2026-07-23T15:03:30Z",
+  "ai_model": "claude-sonnet-5",
+  "triage_duration": 4.12,
   "pytest_args": [
     "tests/test_shop.py::test_checkout_total",
     "tests/test_shop.py::test_db_connection"
@@ -165,7 +181,9 @@ that only ever grows. One failure looks like this:
         "suggested_fix": null
       }
     }
-  ]
+  ],
+  "total_failures": 2,
+  "total_verdicts": 1
 }
 ```
 
@@ -174,6 +192,7 @@ Key fields:
 | Field | Meaning |
 |:------|:--------|
 | `pytest_args` (top level) | De-duplicated selectors that **rerun exactly the failures** in one command: `pytest $(jq -r '.pytest_args[]' .triage.json)` |
+| `ai_model` / `triage_duration` / `total_failures` / `total_verdicts` (top level) | Roll-up you can read without walking `failures`: which model produced the verdicts and how long the pass took (both `null` when triage was off), how many tests failed, and how many got an AI verdict |
 | `failures[].verdict` | `null` when triage is off; otherwise a flat object with `category`, `hypothesis`, `confidence` (`low`/`medium`/`high`), and `suggested_fix` (string or `null`) |
 | `traceback` / `stdout_tail` / `stderr_tail` | Byte-truncated with an explicit `...[truncated N bytes]...` marker, and secret-redacted in `strict` mode |
 
@@ -243,20 +262,38 @@ Two more ship as optional extras: [`anthropic`](#anthropic) and
 
 ### Anthropic
 
-The `anthropic` provider ships in the `[anthropic]` extra:
+The `anthropic` provider ships in the `[anthropic]` extra and talks to the
+Anthropic Messages API through the official
+[`anthropic`](https://pypi.org/project/anthropic/) SDK:
 
 ```bash
 pip install "pytest-triage[anthropic]"
 export ANTHROPIC_API_KEY=sk-ant-...
-pytest --ai-triage=on --ai-provider=anthropic --ai-report=.triage.json
+pytest --ai-triage=on --ai-provider=anthropic
 ```
 
-It calls the Anthropic Messages API with **strict tool use**, so the model
-returns a structured verdict directly. The model defaults to `claude-sonnet-5`
-and is overridable without touching flags:
+It calls the API with **strict tool use** (`record_verdict`) so the model returns
+a structured verdict directly. Deployments or answers that don't fit are handled
+gracefully: a non-conforming response is parsed by the tolerant base parser, and
+anything unrecognisable becomes `category="unknown"` rather than an error. Retries
+are disabled so a rate-limited call fails fast instead of retrying past the
+wall-clock cap.
+
+`pytest-triage` never touches your credentials. Everything below is read straight
+from the environment:
+
+| Environment variable | What it is |
+|:---------------------|:-----------|
+| `ANTHROPIC_API_KEY` | API key. Read by the SDK unless passed explicitly |
+| `ANTHROPIC_AUTH_TOKEN` | Bearer token, as an alternative to the API key |
+| `ANTHROPIC_MODEL` | Model name. Default `claude-sonnet-5`. Anthropic-specific — read only by this provider |
+| `ANTHROPIC_BASE_URL` | Override the API endpoint (a gateway or proxy) |
+
+The model defaults to `claude-sonnet-5`. Override it with the provider's own env
+var — it is Anthropic-specific, so there is nothing shared to clash:
 
 ```bash
-export PYTEST_TRIAGE_MODEL=claude-haiku-4-5
+export ANTHROPIC_MODEL=claude-haiku-4-5
 ```
 
 The `anthropic` SDK is imported **lazily**: if the extra isn't installed you get a
@@ -301,14 +338,16 @@ SDK straight from the environment:
 |:---------------------|:-----------|
 | `GIGACHAT_CREDENTIALS` | Authorization key (base64 `client_id:client_secret`) |
 | `GIGACHAT_SCOPE` | `GIGACHAT_API_PERS` (default), `GIGACHAT_API_B2B`, `GIGACHAT_API_CORP` |
+| `GIGACHAT_MODEL` | Model name. Default `GigaChat` (Lite). GigaChat-specific — read only by this provider |
 | `GIGACHAT_CA_BUNDLE_FILE` | Path to a CA bundle for verifying the endpoint |
 | `GIGACHAT_ACCESS_TOKEN` | A pre-issued token, instead of credentials |
 
 The model defaults to `GigaChat` (Lite — the cheapest one that still classifies a
-traceback reliably) and is overridable without touching flags:
+traceback reliably). Override it with the SDK's own env var — each provider has
+its own, so there is nothing shared to clash:
 
 ```bash
-export PYTEST_TRIAGE_MODEL=GigaChat-2-Max
+export GIGACHAT_MODEL=GigaChat-2-Max
 ```
 
 **Certificate trust.** The root CA that signs the GigaChat endpoints does not
@@ -318,6 +357,16 @@ exactly as before). Point the SDK at a bundle that contains it:
 
 ```bash
 export GIGACHAT_CA_BUNDLE_FILE=/path/to/ca-bundle.crt
+```
+
+Keep such a bundle in a git-ignored `certs/` folder. For GigaChat, fetch the
+official Russian Trusted Root CA — verification stays **on**:
+
+```bash
+curl -fsSL -o certs/root.crt https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt
+curl -fsSL -o certs/sub.crt  https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.crt
+awk 1 certs/root.crt certs/sub.crt > certs/russian_trusted_bundle.pem
+export GIGACHAT_CA_BUNDLE_FILE="$PWD/certs/russian_trusted_bundle.pem"
 ```
 
 Disabling verification is possible via the SDK's own `GIGACHAT_VERIFY_SSL_CERTS`,
@@ -541,7 +590,7 @@ Notes:
 - Behavioural tests use pytest's own `pytester` fixture and
   `runpytest_subprocess()` where exit-code fidelity matters.
 
-## Scope of 0.1.0
+## Scope of 0.1.x
 
 Intentionally **not** in this release: flaky-run detection, a persistent cache,
 git blame/context, an OpenAI provider, an MCP server, parallel triage, and xdist

@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back in Russian; `category` and `confidence` stay English, as the `Verdict`
   contract requires. Forces the `record_verdict` function call and falls back to
   parsing a plain-text JSON answer for deployments that ignore a forced call.
-  Lazily imported, retries disabled, model via `PYTEST_TRIAGE_MODEL` (default
+  Lazily imported, retries disabled, model via `GIGACHAT_MODEL` (default
   `GigaChat` Lite); credentials, scope and TLS trust are read by the SDK from the
   `GIGACHAT_*` environment and never handled by the plugin.
 - `CircuitBreakerClient`: triage stops for the rest of the run after the first
@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run's spend is visible without instrumenting the provider.
 - `redact_nodeid` and `render_sections` are public at `pytest_triage.providers`,
   so a third-party provider inherits nodeid scrubbing and empty-section trimming.
+
+### Changed
+
+- The Anthropic model is now selected with `ANTHROPIC_MODEL` instead of
+  `PYTEST_TRIAGE_MODEL`. Each provider reads its own model variable
+  (`ANTHROPIC_MODEL`, `GIGACHAT_MODEL`), so there is no cross-provider model
+  environment variable left to clash.
 
 ### Fixed
 

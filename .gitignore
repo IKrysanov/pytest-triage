@@ -48,6 +48,12 @@ htmlcov/
 .triage-*.json
 triage.json
 .cache
+
+# Local TLS trust bundles (e.g. the Russian Trusted Root CA for GigaChat).
+# Keep the folder's README, ignore the certificates — substitute your own.
+certs
+certs/*
+!certs/README.md
 nosetests.xml
 coverage.xml
 *.cover

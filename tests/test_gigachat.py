@@ -337,14 +337,12 @@ def test_tls_verification_is_never_disabled_implicitly(
 
 def test_model_defaults_and_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_gigachat(monkeypatch, _completion())
-    monkeypatch.delenv("PYTEST_TRIAGE_MODEL", raising=False)
     monkeypatch.delenv("GIGACHAT_MODEL", raising=False)
     assert GigaChatClient()._model == "GigaChat"
-    monkeypatch.setenv("GIGACHAT_MODEL", "GigaChat-2")
+    assert GigaChatClient().model == "GigaChat"  # public, for the report
+    monkeypatch.setenv("GIGACHAT_MODEL", "GigaChat-2")  # provider-specific env
     assert GigaChatClient()._model == "GigaChat-2"
-    monkeypatch.setenv("PYTEST_TRIAGE_MODEL", "GigaChat-Max")
-    assert GigaChatClient()._model == "GigaChat-Max"
-    assert GigaChatClient(model="GigaChat-Pro")._model == "GigaChat-Pro"
+    assert GigaChatClient(model="GigaChat-Pro")._model == "GigaChat-Pro"  # arg wins
 
 
 def test_token_ceiling_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:

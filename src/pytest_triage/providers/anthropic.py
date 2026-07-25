@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from pytest_triage.context import FailureContext
 
 _DEFAULT_MODEL = "claude-sonnet-5"
-_MODEL_ENV = "PYTEST_TRIAGE_MODEL"
+_MODEL_ENV = "ANTHROPIC_MODEL"
 _MAX_TOKENS = 1024
 # Fail fast: the plugin's budget/timeout layer owns resilience, so SDK retries
 # only fight the wall-clock cap and leave abandoned threads hitting the API.
@@ -88,8 +88,8 @@ class AnthropicClient(BaseTriageClient):
     """Triage via Anthropic tool use. Requires ``pytest-triage[anthropic]``.
 
     The model defaults to ``claude-sonnet-5`` and can be overridden with the
-    ``PYTEST_TRIAGE_MODEL`` environment variable or the ``model`` argument. The
-    API key is read from ``ANTHROPIC_API_KEY`` by the SDK unless passed here.
+    ``ANTHROPIC_MODEL`` environment variable or the ``model`` argument. The API
+    key is read from ``ANTHROPIC_API_KEY`` by the SDK unless passed here.
     """
 
     def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
@@ -103,6 +103,11 @@ class AnthropicClient(BaseTriageClient):
         self._client: Any = anthropic.Anthropic(
             api_key=api_key, max_retries=_MAX_RETRIES
         )
+
+    @property
+    def model(self) -> str:
+        """The model queried for triage (surfaced as `ai_model` in the report)."""
+        return self._model
 
     def _render_prompt(self, ctx: FailureContext) -> str:
         return render_sections(

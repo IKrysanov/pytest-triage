@@ -47,8 +47,7 @@ if TYPE_CHECKING:
 # "GigaChat" is the Lite model: the cheapest one that still classifies a
 # traceback reliably. Override for Pro/Max when a suite justifies the cost.
 _DEFAULT_MODEL = "GigaChat"
-_MODEL_ENV = "PYTEST_TRIAGE_MODEL"
-_SDK_MODEL_ENV = "GIGACHAT_MODEL"
+_MODEL_ENV = "GIGACHAT_MODEL"
 # A verdict is one sentence plus a fix. Cyrillic costs roughly twice the tokens
 # per character of Latin, so the cap is generous but still a hard ceiling.
 _MAX_TOKENS = 512
@@ -119,10 +118,10 @@ _VERDICT_FUNCTION: dict[str, Any] = {
 class GigaChatClient(BaseTriageClient):
     """Triage via GigaChat function calling. Requires ``pytest-triage[gigachat]``.
 
-    The model defaults to ``GigaChat`` (Lite) and can be overridden with
-    ``PYTEST_TRIAGE_MODEL``, the SDK's own ``GIGACHAT_MODEL``, or the ``model``
-    argument. Authorization, scope and TLS trust come from the ``GIGACHAT_*``
-    environment unless passed explicitly.
+    The model defaults to ``GigaChat`` (Lite) and can be overridden with the
+    SDK's own ``GIGACHAT_MODEL`` environment variable or the ``model`` argument.
+    Authorization, scope and TLS trust come from the ``GIGACHAT_*`` environment
+    unless passed explicitly.
     """
 
     def __init__(
@@ -139,12 +138,7 @@ class GigaChatClient(BaseTriageClient):
             import gigachat
         except ImportError as exc:
             raise _missing_dependency_error() from exc
-        self._model = (
-            model
-            or os.environ.get(_MODEL_ENV)
-            or os.environ.get(_SDK_MODEL_ENV)
-            or _DEFAULT_MODEL
-        )
+        self._model = model or os.environ.get(_MODEL_ENV) or _DEFAULT_MODEL
         options: dict[str, Any] = {"max_retries": _MAX_RETRIES}
         # Only override what the caller actually set; everything else stays with
         # the SDK so GIGACHAT_* keeps working.
@@ -160,6 +154,11 @@ class GigaChatClient(BaseTriageClient):
         # Typed Any: the SDK is untyped in CI (not installed); keep the chat()
         # call consistent whether or not gigachat is present locally.
         self._client: Any = gigachat.GigaChat(**options)
+
+    @property
+    def model(self) -> str:
+        """The model queried for triage (surfaced as `ai_model` in the report)."""
+        return self._model
 
     def _render_prompt(self, ctx: FailureContext) -> str:
         return render_sections(

@@ -34,26 +34,43 @@ SCHEMA_VERSION = 1
 
 
 def build_report(
-    failures: list[FailureContext], verdicts: list[Verdict | None]
+    failures: list[FailureContext],
+    verdicts: list[Verdict | None],
+    duration: float | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the machine-readable report payload.
 
     `verdicts` is aligned with `failures`; each entry is None when triage is off.
+    `duration` is the seconds the whole triage pass took and `model` the provider
+    model used — both None when triage did not run.
     """
     return {
         "schema_version": SCHEMA_VERSION,
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # The model that produced the verdicts, None when triage was off.
+        "ai_model": model,
+        # Seconds spent triaging (all provider calls), None when triage was off.
+        "triage_duration": round(duration, 3) if duration is not None else None,
         # Ready-to-run selectors that rerun every failure in one command.
         "pytest_args": _dedup([failure.nodeid for failure in failures]),
         "failures": [
             _failure_to_dict(failure, verdict)
             for failure, verdict in zip(failures, verdicts, strict=True)
         ],
+        # Roll-up (additive to the schema): totals a consumer can read without
+        # walking `failures`. total_verdicts is how many got an AI verdict.
+        "total_failures": len(failures),
+        "total_verdicts": sum(1 for verdict in verdicts if verdict is not None),
     }
 
 
 def write_report(
-    path: Path, failures: list[FailureContext], verdicts: list[Verdict | None]
+    path: Path,
+    failures: list[FailureContext],
+    verdicts: list[Verdict | None],
+    duration: float | None = None,
+    model: str | None = None,
 ) -> None:
     """Serialize the report and write it atomically (temp file + os.replace).
 
@@ -61,7 +78,8 @@ def write_report(
     hold residual sensitive output and must not be world-readable on a shared CI
     host.
     """
-    text = json.dumps(build_report(failures, verdicts), indent=2, ensure_ascii=False)
+    payload = build_report(failures, verdicts, duration, model)
+    text = json.dumps(payload, indent=2, ensure_ascii=False)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     # Create the temp owner-only from the first byte: writing then chmod would
@@ -121,10 +139,12 @@ class _ReportWriter:
         self,
         failures: list[FailureContext],
         verdicts: list[Verdict | None],
+        duration: float | None,
+        model: str | None,
         triage_config: Config,
     ) -> None:
         try:
-            write_report(self._path, failures, verdicts)
+            write_report(self._path, failures, verdicts, duration, model)
         except Exception as exc:  # never let reporting affect the test run
             print(
                 f"pytest-triage: failed to write report to {self._path}: {exc}",

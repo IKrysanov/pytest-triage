@@ -51,6 +51,30 @@ def test_build_report_shape_and_dedup() -> None:
     assert first["pytest_args"] == ["t.py::a"]
     assert first["exc_type"] == "ValueError"
     assert first["verdict"] is None
+    assert report["total_failures"] == 2
+    assert report["total_verdicts"] == 0  # triage off -> no verdicts
+
+
+def test_report_rolls_up_totals() -> None:
+    fc = FailureContext(nodeid="t.py::a", phase="call", outcome="failed")
+    verdict = Verdict(category="regression", hypothesis="h", confidence="high")
+    report = build_report([fc, fc], [verdict, None])
+    assert report["total_failures"] == 2
+    assert report["total_verdicts"] == 1  # one failure got an AI verdict
+
+
+def test_report_records_triage_duration() -> None:
+    fc = FailureContext(nodeid="t.py::a", phase="call", outcome="failed")
+    assert build_report([fc], [None])["triage_duration"] is None  # triage off
+    report = build_report([fc], [None], 1.23456)
+    assert report["triage_duration"] == 1.235  # rounded, near the top
+
+
+def test_report_records_ai_model() -> None:
+    fc = FailureContext(nodeid="t.py::a", phase="call", outcome="failed")
+    assert build_report([fc], [None])["ai_model"] is None  # triage off
+    report = build_report([fc], [None], 1.0, "claude-sonnet-5")
+    assert report["ai_model"] == "claude-sonnet-5"
 
 
 def test_build_report_serializes_verdict() -> None:
@@ -93,7 +117,9 @@ def test_report_writer_swallows_write_errors(
     # The target's parent is a regular file, so mkdir/write fails.
     writer = _ReportWriter(blocker / "report.json")
     # must not raise
-    writer.pytest_triage_report(failures=[], verdicts=[], triage_config=Config())
+    writer.pytest_triage_report(
+        failures=[], verdicts=[], duration=None, model=None, triage_config=Config()
+    )
     assert "failed to write report" in capsys.readouterr().err
 
 
@@ -173,6 +199,8 @@ def test_report_includes_verdict_when_triage_on(pytester: pytest.Pytester) -> No
     assert verdict is not None
     # FakeTriageClient maps AssertionError -> test_bug deterministically.
     assert verdict["category"] == "test_bug"
+    assert isinstance(data["triage_duration"], float)  # measured end-to-end
+    assert data["triage_duration"] >= 0
 
 
 def test_pytest_args_rerun_exactly_the_failures(pytester: pytest.Pytester) -> None:

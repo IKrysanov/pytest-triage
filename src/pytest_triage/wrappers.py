@@ -208,6 +208,22 @@ def call_stats(client: TriageClient) -> tuple[int, int]:
     return calls, hits
 
 
+def provider_model(client: TriageClient | None) -> str | None:
+    """The wrapped provider's model name, or None if it exposes none.
+
+    Walks the decorator chain to the provider. Providers may expose a `model`
+    string (the built-in ones do); third-party providers that don't just get a
+    `null` `ai_model` in the report.
+    """
+    node: object | None = client
+    while node is not None:
+        model = getattr(node, "model", None)
+        if isinstance(model, str):
+            return model
+        node = getattr(node, "_inner", None)
+    return None
+
+
 def build_triage_client(config: Config) -> TriageClient | None:
     """Resolve the provider and wrap it, or None when triage is off.
 
