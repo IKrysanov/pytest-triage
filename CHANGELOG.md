@@ -28,11 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The triage system prompt now tells the model that captured stdout, stderr and
-  log output are part of the evidence and often name the cause (an HTTP 5xx
-  points to `env`, a wrong expected value to `test_bug`), and forbids inventing
-  files, functions or settings that are not in the context. Applies to the
-  Anthropic and OpenAI providers; the GigaChat prompt already forbade fabrication
-  and gains the same output-is-evidence guidance.
+  log output are part of the evidence and often name the cause (an HTTP 5xx or a
+  connection error points to `env`), asks it to weigh code behavior against the
+  test's expectation and prefer `unknown` when the context cannot say which is
+  wrong, and forbids inventing files, functions or settings not in the context.
+  Applies to the Anthropic and OpenAI providers, which now share one prompt
+  module; the GigaChat prompt already forbade fabrication and gains the same
+  output-is-evidence guidance.
 
 ### Security
 
