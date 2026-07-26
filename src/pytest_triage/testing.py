@@ -30,7 +30,7 @@ def assert_conforms(client: TriageClient) -> None:
 
     Call it against a fresh client: `analyze` must return a flat, valid Verdict
     for both a normal and a degenerate FailureContext, and `close` must be safe
-    to call.
+    to call more than once (idempotent).
     """
     for ctx in (_sample_context(), _degenerate_context()):
         verdict = client.analyze(ctx)
@@ -41,6 +41,9 @@ def assert_conforms(client: TriageClient) -> None:
         )
         assert isinstance(verdict.hypothesis, str), "hypothesis must be a string"
         assert verdict.suggested_fix is None or isinstance(verdict.suggested_fix, str)
+    # close must be idempotent: a second call must not raise. The triage loop
+    # closes in a finally, and a caller may close again.
+    client.close()
     client.close()
 
 

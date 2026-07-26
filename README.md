@@ -29,6 +29,12 @@ thousand lines of traceback.
 | [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) | Linted & formatted with Ruff |
 | [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/IKrysanov/pytest-triage/badge)](https://scorecard.dev/viewer/?uri=github.com/IKrysanov/pytest-triage) | OpenSSF supply-chain security score |
 
+**AI providers** — bring your own key; each is an optional extra:
+
+[![Anthropic Claude](https://img.shields.io/badge/Anthropic-Claude-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://www.anthropic.com/)
+[![OpenAI GPT](https://img.shields.io/badge/OpenAI-GPT-412991?style=for-the-badge&logo=openai&logoColor=white)](https://openai.com/)
+[![GigaChat](https://img.shields.io/badge/GigaChat-Sber-21A038?style=for-the-badge&logo=sberbank&logoColor=white)](https://giga.chat/)
+
 > **Everything is opt-in.** Installing `pytest-triage` changes the behaviour of
 > zero existing suites. Nothing runs, no report is written, and no network is
 > touched until you pass an explicit `--ai-*` flag. See
@@ -45,6 +51,8 @@ thousand lines of traceback.
 - [Configuration](#configuration)
 - [Providers](#providers)
   - [Anthropic](#anthropic)
+  - [OpenAI](#openai)
+    - [OpenAI-compatible endpoints](#openai-compatible-endpoints)
   - [GigaChat (for the RU segment)](#gigachat-for-the-ru-segment)
 - [What a run costs](#what-a-run-costs)
 - [Write your own provider](#write-your-own-provider)
@@ -83,6 +91,10 @@ The core package depends only on `pytest`. LLM providers are optional extras:
 
 ```bash
 pip install "pytest-triage[anthropic]"   # adds the Anthropic provider
+```
+
+```bash
+pip install "pytest-triage[openai]"      # adds the OpenAI provider
 ```
 
 ```bash
@@ -174,6 +186,7 @@ that only ever grows. One failure looks like this:
       "duration": 0.00004,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "env",
         "hypothesis": "ConnectionError in tests/test_shop.py::test_db_connection",
@@ -194,7 +207,7 @@ Key fields:
 | `pytest_args` (top level) | De-duplicated selectors that **rerun exactly the failures** in one command: `pytest $(jq -r '.pytest_args[]' .triage.json)` |
 | `ai_model` / `triage_duration` / `total_failures` / `total_verdicts` (top level) | Roll-up you can read without walking `failures`: which model produced the verdicts and how long the pass took (both `null` when triage was off), how many tests failed, and how many got an AI verdict |
 | `failures[].verdict` | `null` when triage is off; otherwise a flat object with `category`, `hypothesis`, `confidence` (`low`/`medium`/`high`), and `suggested_fix` (string or `null`) |
-| `traceback` / `stdout_tail` / `stderr_tail` | Byte-truncated with an explicit `...[truncated N bytes]...` marker, and secret-redacted in `strict` mode |
+| `traceback` / `stdout_tail` / `stderr_tail` / `log_tail` | Captured traceback, stdout, stderr, and `logging`-module output; byte-truncated with an explicit `...[truncated N bytes]...` marker, and secret-redacted in `strict` mode |
 
 The report is written **atomically** (temp file + rename) and **owner-only**
 (`0o600`) — even after redaction it may hold residual sensitive output and must
@@ -257,8 +270,8 @@ built in and require no extra dependency:
 | `fake` | Deterministic verdict from the exception type (`AssertionError → test_bug`, `ConnectionError`/`TimeoutError`/`OSError → env`, else `regression`). No network. |
 | `oauth-fake` | Same, but exercises a lazy token-refresh lifecycle — a reference for OAuth-style transports. |
 
-Two more ship as optional extras: [`anthropic`](#anthropic) and
-[`gigachat`](#gigachat-for-the-ru-segment).
+Three more ship as optional extras: [`anthropic`](#anthropic),
+[`openai`](#openai), and [`gigachat`](#gigachat-for-the-ru-segment).
 
 ### Anthropic
 
@@ -298,6 +311,82 @@ export ANTHROPIC_MODEL=claude-haiku-4-5
 
 The `anthropic` SDK is imported **lazily**: if the extra isn't installed you get a
 clear configuration-time error — never a surprise `ImportError` mid-run.
+
+### OpenAI
+
+The `openai` provider ships in the `[openai]` extra and talks to the OpenAI Chat
+Completions API through the official
+[`openai`](https://pypi.org/project/openai/) SDK:
+
+```bash
+pip install "pytest-triage[openai]"
+export OPENAI_API_KEY=sk-...
+pytest --ai-triage=on --ai-provider=openai
+```
+
+It forces a **function call** (`record_verdict`, strict schema) so the model
+returns a structured verdict directly. A non-conforming answer is parsed by the
+tolerant base parser, and anything unrecognisable becomes `category="unknown"`
+rather than an error. Retries are disabled so a rate-limited call fails fast
+instead of retrying past the wall-clock cap.
+
+`pytest-triage` never touches your credentials. Everything below is read straight
+from the environment:
+
+| Environment variable | What it is |
+|:---------------------|:-----------|
+| `OPENAI_API_KEY` | API key. Read by the SDK unless passed explicitly |
+| `OPENAI_MODEL` | Model name. Default `gpt-4o-mini`. OpenAI-specific — read only by this provider |
+| `OPENAI_BASE_URL` | Override the API endpoint (a gateway, proxy, or compatible host) |
+| `OPENAI_ORG_ID` | Organization id, when your key belongs to several |
+
+The model defaults to `gpt-4o-mini` (cheap and reliable for classifying a
+traceback). Override it with the provider's own env var:
+
+```bash
+export OPENAI_MODEL=gpt-4o
+```
+
+The `openai` SDK is imported **lazily**: if the extra isn't installed you get a
+clear configuration-time error — never a surprise `ImportError` mid-run.
+
+#### OpenAI-compatible endpoints
+
+The `openai` provider is **not** tied to OpenAI's own servers. A growing number of
+APIs speak the same protocol, so you can point it at any of them with
+`OPENAI_BASE_URL` and a model — **no new provider, no new code**:
+
+[![Kimi](https://img.shields.io/badge/Kimi-Moonshot-16151A?style=flat-square&logo=moonshot&logoColor=white)](https://www.moonshot.ai/)
+[![DeepSeek](https://img.shields.io/badge/DeepSeek-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://www.deepseek.com/)
+[![Groq](https://img.shields.io/badge/Groq-F55036?style=flat-square&logo=groq&logoColor=white)](https://groq.com/)
+[![Ollama](https://img.shields.io/badge/Ollama-local-000000?style=flat-square&logo=ollama&logoColor=white)](https://ollama.com/)
+[![vLLM](https://img.shields.io/badge/vLLM-self--hosted-30A2FF?style=flat-square)](https://docs.vllm.ai/)
+
+| Endpoint | `OPENAI_BASE_URL` | Example `OPENAI_MODEL` |
+|:---------|:------------------|:-----------------------|
+| **Kimi** (Moonshot) | `https://api.moonshot.ai/v1` | `kimi-k2-0711-preview` |
+| **DeepSeek** | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| **Groq** | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
+| **Ollama** (local) | `http://localhost:11434/v1` | any pulled model, e.g. `qwen2.5` |
+| **vLLM** / **LM Studio** (self-hosted) | `http://your-host:8000/v1` | your served model |
+
+```bash
+# Kimi (Moonshot) — same provider, different endpoint
+export OPENAI_API_KEY=<moonshot-key>
+export OPENAI_BASE_URL=https://api.moonshot.ai/v1
+export OPENAI_MODEL=kimi-k2-0711-preview
+pytest --ai-triage=on --ai-provider=openai
+```
+
+For a **local** model the key can be any non-empty placeholder
+(`OPENAI_API_KEY=ollama`). Function-calling support varies by endpoint; where a
+model doesn't honour the forced call, the tolerant parser reads its plain-text
+answer and falls back to `category="unknown"` — the run is never affected.
+
+> **Azure OpenAI** is *not* a plain base-url swap — it needs the SDK's
+> `AzureOpenAI` client (api-version, deployment names). Wrap it in a small custom
+> provider (see [Write your own provider](#write-your-own-provider)) rather than
+> `OPENAI_BASE_URL`.
 
 ### GigaChat (for the RU segment)
 

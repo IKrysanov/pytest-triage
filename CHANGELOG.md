@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-26
+
+### Added
+
+- Captured `logging`-module output is now collected (`FailureContext.log_tail`,
+  additive, `schema_version` stays `1`) and passed to the model as a `log tail:`
+  section. pytest keeps logger output in a section separate from stdout/stderr,
+  so server/app logs emitted through a logger reached neither the prompt nor the
+  report before; now triage sees them, byte-truncated and redacted like the
+  other tails. The report gains a matching `log_tail` field per failure.
+- `OpenAIClient` (optional `[openai]` extra): triage via the OpenAI Chat
+  Completions API with strict function calling (`record_verdict`). Lazily
+  imported, retries disabled, model via `OPENAI_MODEL` (default `gpt-4o-mini`);
+  the API key and endpoint are read by the SDK from the `OPENAI_*` environment
+  and never handled by the plugin. The same provider drives any OpenAI-compatible
+  endpoint (Kimi/Moonshot, DeepSeek, Groq, local Ollama/vLLM) via `OPENAI_BASE_URL`
+  — no per-vendor client.
+
+### Changed
+
+- The triage system prompt now tells the model that captured stdout, stderr and
+  log output are part of the evidence and often name the cause (an HTTP 5xx
+  points to `env`, a wrong expected value to `test_bug`), and forbids inventing
+  files, functions or settings that are not in the context. Applies to the
+  Anthropic and OpenAI providers; the GigaChat prompt already forbade fabrication
+  and gains the same output-is-evidence guidance.
+
+### Security
+
+- Redaction now covers vendor-prefixed API tokens that the generic base64 rule
+  fragmented on `-`/`_` or skipped when short:
+  - AI / VCS / packages: OpenAI/Anthropic `sk-`, GitHub (`ghp_`/`github_pat_`),
+    GitLab (`glpat-`), PyPI (`pypi-`), Hugging Face (`hf_`), Docker Hub
+    (`dckr_pat_`), npm (`npm_`).
+  - Cloud: DigitalOcean (`do*_v1_`), Databricks (`dapi…`). (GCP service-account
+    keys are PEM, already covered.)
+  - Messengers / payments: Slack (`xox…`), Discord bot tokens, Telegram bot
+    tokens, Stripe (`sk_live_`/`rk_test_`), Square (`sq0atp-`/`sq0csp-`),
+    Twilio (`AC…`/`SK…`), Braintree/PayPal, Mailgun (`key-…`).
+  - Google: API keys (`AIza…`) and OAuth (`GOCSPX-`/`ya29.`); SendGrid (`SG.…`).
+
+  Each rule is a literal prefix plus character classes with no nested
+  quantifiers, so redaction stays linear-time (no ReDoS).
+
+### Fixed
+
+- **Redaction destroyed file paths**: `/` was a base64 run character, so an
+  absolute path in a traceback (`/Users/.../src/pytest_triage/plugin.py`) was one
+  long run and got redacted whole to `[REDACTED].py` in `strict` mode — gutting
+  the single most useful triage signal, the failing file. `/` is now excluded
+  from the base64 run; secrets are still covered by the env, vendor, JWT, URL and
+  assignment rules.
+- **Redaction mangled the traceback from a short env value**: a secret-named env
+  var with a common placeholder value (`API_TOKEN=test`) redacted that word
+  everywhere it appeared as a substring — `test_login` → `[REDACTED]_login`,
+  `pytest` → `py[REDACTED]`. Environment values are now redacted only as whole
+  tokens.
+- A non-finite `--ai-timeout` (`inf`/`nan`) parsed past the `> 0` check; `inf`
+  would defeat the wall-clock cap. It is now a clear configuration error.
+- Provider `close()` is now self-protecting: the Anthropic, OpenAI and GigaChat
+  clients fence the underlying SDK teardown, so a second close or an SDK that
+  raises on close (already-closed session, dead socket) can no longer surface an
+  exception. `assert_conforms` now calls `close()` twice to enforce idempotency.
+- Tool-call arguments are accepted as a raw JSON string or an already-parsed
+  object in the OpenAI and GigaChat providers, so an OpenAI-compatible endpoint
+  that returns the parsed form yields a verdict instead of degrading to
+  `unknown`.
+
 ## [0.1.1] - 2026-07-25
 
 ### Added
@@ -90,6 +158,7 @@ First public release. Fully opt-in: installing the plugin changes no existing su
   (3.10–3.13), CodeQL, Scorecard, DCO, Dependabot, Codecov, and a Trusted-Publishing
   release with Sigstore attestations.
 
-[Unreleased]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/IKrysanov/pytest-triage/releases/tag/v0.1.0

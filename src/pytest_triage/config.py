@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -97,6 +98,13 @@ def _resolve_positive_float(config: pytest.Config, name: str) -> float:
         raise pytest.UsageError(
             f"pytest-triage: {name} must be a number, got {raw!r}"
         ) from None
+    # `float("inf")`/`float("nan")` parse fine and slip past `<= 0`; an infinite
+    # timeout defeats the wall-clock cap that keeps a hung provider from stalling
+    # the run, so reject non-finite values explicitly.
+    if not math.isfinite(value):
+        raise pytest.UsageError(
+            f"pytest-triage: {name} must be a finite number, got {value}"
+        )
     if value <= 0:
         raise pytest.UsageError(f"pytest-triage: {name} must be > 0, got {value}")
     return value

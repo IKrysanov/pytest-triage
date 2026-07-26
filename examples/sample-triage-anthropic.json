@@ -1,9 +1,13 @@
 {
   "schema_version": 1,
-  "created_at": "2026-07-25T11:22:59Z",
+  "created_at": "2026-07-26T11:12:19Z",
   "ai_model": "claude-sonnet-5",
-  "triage_duration": 116.613,
+  "triage_duration": 127.609,
   "pytest_args": [
+    "examples/test_diagnostics.py::test_checkout_total",
+    "examples/test_diagnostics.py::test_payment_capture",
+    "examples/test_diagnostics.py::test_inventory_reconcile",
+    "examples/test_diagnostics.py::test_feature_flag_rollout",
     "examples/test_environment.py::test_payments_health",
     "examples/test_environment.py::test_auth_health",
     "examples/test_environment.py::test_cache_ping",
@@ -33,6 +37,90 @@
   ],
   "failures": [
     {
+      "nodeid": "examples/test_diagnostics.py::test_checkout_total",
+      "pytest_args": [
+        "examples/test_diagnostics.py::test_checkout_total"
+      ],
+      "phase": "call",
+      "outcome": "failed",
+      "exc_type": "AssertionError",
+      "exc_message": "assert 113.5 == 108.5",
+      "traceback": "def test_checkout_total() -> None:\n        # stdout shows the arithmetic; the model can see the expectation is stale\n        # (shipping was added to the total later) rather than a code regression.\n        subtotal, tax, shipping = 100.0, 8.5, 5.0\n        total = subtotal + tax + shipping\n        print(f\"cart: subtotal={subtotal} tax={tax} shipping={shipping} total={total}\")\n>       assert total == 108.5\nE       assert 113.5 == 108.5\n\nexamples/test_diagnostics.py:23: AssertionError",
+      "duration": 0.0001822499998525018,
+      "stdout_tail": "cart: subtotal=100.0 tax=8.5 shipping=5.0 total=113.5\n",
+      "stderr_tail": "",
+      "log_tail": "",
+      "verdict": {
+        "category": "test_bug",
+        "hypothesis": "The test's expected total (108.5) is stale and doesn't account for shipping being included in the total calculation, while the code correctly computes subtotal+tax+shipping=113.5.",
+        "confidence": "high",
+        "suggested_fix": "Update the assertion to `assert total == 113.5` to reflect that shipping is included in the total."
+      }
+    },
+    {
+      "nodeid": "examples/test_diagnostics.py::test_payment_capture",
+      "pytest_args": [
+        "examples/test_diagnostics.py::test_payment_capture"
+      ],
+      "phase": "call",
+      "outcome": "failed",
+      "exc_type": "AssertionError",
+      "exc_message": "assert False",
+      "traceback": "def test_payment_capture() -> None:\n        # The logger records the upstream response; the assertion alone only sees a\n        # bool. log_tail turns an opaque \"assert ok\" into a clear env/infra verdict.\n        status = 503\n        log.error(\"payment upstream returned HTTP %s (gateway timeout)\", status)\n        log.warning(\"retry budget exhausted after 3 attempts to pay.svc.internal\")\n        ok = status == 200\n>       assert ok\nE       assert False\n\nexamples/test_diagnostics.py:33: AssertionError",
+      "duration": 0.0001543749995107646,
+      "stdout_tail": "",
+      "stderr_tail": "",
+      "log_tail": "ERROR    shop:test_diagnostics.py:30 payment upstream returned HTTP 503 (gateway timeout)\nWARNING  shop:test_diagnostics.py:31 retry budget exhausted after 3 attempts to pay.svc.internal",
+      "verdict": {
+        "category": "env",
+        "hypothesis": "The payment upstream service (pay.svc.internal) returned HTTP 503 and retries were exhausted, indicating an infrastructure/service outage rather than a code or test defect.",
+        "confidence": "high",
+        "suggested_fix": "Investigate the availability of pay.svc.internal and its upstream dependencies; consider retry/backoff tuning or mocking the payment gateway in tests to avoid dependency on the live service."
+      }
+    },
+    {
+      "nodeid": "examples/test_diagnostics.py::test_inventory_reconcile",
+      "pytest_args": [
+        "examples/test_diagnostics.py::test_inventory_reconcile"
+      ],
+      "phase": "call",
+      "outcome": "failed",
+      "exc_type": "AssertionError",
+      "exc_message": "assert 998 == 1000",
+      "traceback": "def test_inventory_reconcile() -> None:\n        # A warning on stderr flags a stale cache; the failure itself is just a count\n        # mismatch. stderr explains why the numbers drifted.\n        print(\"WARN inventory cache is 47 minutes stale\", file=sys.stderr)\n        counted, expected = 998, 1000\n        print(f\"reconcile: counted={counted} expected={expected}\")\n>       assert counted == expected\nE       assert 998 == 1000\n\nexamples/test_diagnostics.py:42: AssertionError",
+      "duration": 0.00013570899955084315,
+      "stdout_tail": "reconcile: counted=998 expected=1000\n",
+      "stderr_tail": "WARN inventory cache is 47 minutes stale\n",
+      "log_tail": "",
+      "verdict": {
+        "category": "env",
+        "hypothesis": "The inventory count mismatch is caused by a stale inventory cache (47 minutes old) rather than a code defect, as flagged explicitly by the stderr warning.",
+        "confidence": "medium",
+        "suggested_fix": "Refresh or invalidate the inventory cache before running reconciliation, or increase cache refresh frequency to avoid drift."
+      }
+    },
+    {
+      "nodeid": "examples/test_diagnostics.py::test_feature_flag_rollout",
+      "pytest_args": [
+        "examples/test_diagnostics.py::test_feature_flag_rollout"
+      ],
+      "phase": "call",
+      "outcome": "failed",
+      "exc_type": "AssertionError",
+      "exc_message": "assert None is not None",
+      "traceback": "def test_feature_flag_rollout() -> None:\n        # Mixed streams: a logged config read plus a stdout state dump. Together they\n        # point at a missing configuration (env), not a bug in the pricing code.\n        log.warning(\"feature flag 'new_pricing' resolved to None (config not loaded)\")\n        print(\"pricing engine fell back to legacy path\")\n        price = None\n>       assert price is not None\nE       assert None is not None\n\nexamples/test_diagnostics.py:51: AssertionError",
+      "duration": 9.366700032842346e-05,
+      "stdout_tail": "pricing engine fell back to legacy path\n",
+      "stderr_tail": "",
+      "log_tail": "WARNING  shop:test_diagnostics.py:48 feature flag 'new_pricing' resolved to None (config not loaded)",
+      "verdict": {
+        "category": "env",
+        "hypothesis": "The 'new_pricing' feature flag config was not loaded, causing price to resolve to None instead of a valid value.",
+        "confidence": "medium",
+        "suggested_fix": "Ensure the configuration/feature flag store is properly loaded or mocked in the test environment so 'new_pricing' resolves to a valid value."
+      }
+    },
+    {
       "nodeid": "examples/test_environment.py::test_payments_health",
       "pytest_args": [
         "examples/test_environment.py::test_payments_health"
@@ -41,15 +129,16 @@
       "outcome": "failed",
       "exc_type": "ConnectionError",
       "exc_message": "HTTPSConnectionPool(host='payments.internal.invalid', port=443): Max retries exceeded with url: /health (Caused by NameResolutionError(\"HTTPSConnection(host='payments.internal.invalid', port=443): Failed to resolve 'payments.internal.invalid' ([Errno 8] nodename nor servname provided, or not known)\"))",
-      "traceback": "...[truncated 23328 bytes]...\nrns Response object.\n    \n        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.\n        :param stream: (optional) Whether to stream the request content.\n        :param timeout: (optional) How long to wait for the server to send\n            data before giving up, as a float, or a :ref:`(connect timeout,\n            read timeout) <timeouts>` tuple.\n        :type timeout: float or tuple or urllib3 Timeout object\n        :param verify: (optional) Either a boolean, in which case it controls whether\n            we verify the server's TLS certificate, or a string, in which case it\n            must be a path to a CA bundle to use\n        :param cert: (optional) Any user-provided SSL certificate to be trusted.\n        :param proxies: (optional) The proxies dictionary to apply to the request.\n        :rtype: requests.Response\n        \"\"\"\n    \n        assert _is_prepared(request)\n    \n        try:\n            conn = self.get_connection_with_tls_context(\n                request, verify, proxies=proxies, cert=cert\n            )\n        except LocationValueError as e:\n            raise InvalidURL(e, request=request)\n    \n        self.cert_verify(conn, request.url, verify, cert)\n        url = self.request_url(request, proxies)\n        self.add_headers(\n            request,\n            stream=stream,\n            timeout=timeout,\n            verify=verify,\n            cert=cert,\n            proxies=proxies,\n        )\n    \n        chunked = not (request.body is None or \"Content-Length\" in request.headers)\n    \n        if isinstance(timeout, tuple):\n            try:\n                connect, read = timeout\n                resolved_timeout = TimeoutSauce(connect=connect, read=read)\n            except ValueError:\n                raise ValueError(\n                    f\"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, \"\n                    f\"or a single float to set both timeouts to the same value.\"\n                )\n        elif isinstance(timeout, TimeoutSauce):\n            resolved_timeout = timeout\n        else:\n            resolved_timeout = TimeoutSauce(connect=timeout, read=timeout)\n    \n        try:\n            resp = conn.urlopen(\n                method=request.method,\n                url=url,\n                body=request.body,  # type: ignore[arg-type]  # urllib3 stubs don't accept Iterable[bytes | str]\n                headers=request.headers,  # type: ignore[arg-type]  # urllib3#3072\n                redirect=False,\n                assert_same_host=False,\n                preload_content=False,\n                decode_content=False,\n                retries=self.max_retries,\n                timeout=resolved_timeout,\n                chunked=chunked,\n            )\n    \n        except (ProtocolError, OSError) as err:\n            raise ConnectionError(err, request=request)\n    \n        except MaxRetryError as e:\n            if isinstance(e.reason, ConnectTimeoutError):\n                # TODO: Remove this in 3.0.0: see #2811\n                if not isinstance(e.reason, NewConnectionError):\n                    raise ConnectTimeout(e, request=request)\n    \n            if isinstance(e.reason, ResponseError):\n                raise RetryError(e, request=request)\n    \n            if isinstance(e.reason, _ProxyError):\n                raise ProxyError(e, request=request)\n    \n            if isinstance(e.reason, _SSLError):\n                # This branch is for urllib3 v1.22 and later.\n                raise SSLError(e, request=request)\n    \n>           raise ConnectionError(e, request=request)\nE           requests.exceptions.ConnectionError: HTTPSConnectionPool(host='payments.internal.invalid', port=443): Max retries exceeded with url: /health (Caused by NameResolutionError(\"HTTPSConnection(host='payments.internal.invalid', port=443): Failed to resolve 'payments.internal.invalid' ([Errno 8] nodename nor servname provided, or not known)\"))\n\n.venv/lib/python3.13/site-[REDACTED].py:729: ConnectionError",
-      "duration": 0.003309375000753789,
+      "traceback": "...[truncated 23328 bytes]...\nrns Response object.\n    \n        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.\n        :param stream: (optional) Whether to stream the request content.\n        :param timeout: (optional) How long to wait for the server to send\n            data before giving up, as a float, or a :ref:`(connect timeout,\n            read timeout) <timeouts>` tuple.\n        :type timeout: float or tuple or urllib3 Timeout object\n        :param verify: (optional) Either a boolean, in which case it controls whether\n            we verify the server's TLS certificate, or a string, in which case it\n            must be a path to a CA bundle to use\n        :param cert: (optional) Any user-provided SSL certificate to be trusted.\n        :param proxies: (optional) The proxies dictionary to apply to the request.\n        :rtype: requests.Response\n        \"\"\"\n    \n        assert _is_prepared(request)\n    \n        try:\n            conn = self.get_connection_with_tls_context(\n                request, verify, proxies=proxies, cert=cert\n            )\n        except LocationValueError as e:\n            raise InvalidURL(e, request=request)\n    \n        self.cert_verify(conn, request.url, verify, cert)\n        url = self.request_url(request, proxies)\n        self.add_headers(\n            request,\n            stream=stream,\n            timeout=timeout,\n            verify=verify,\n            cert=cert,\n            proxies=proxies,\n        )\n    \n        chunked = not (request.body is None or \"Content-Length\" in request.headers)\n    \n        if isinstance(timeout, tuple):\n            try:\n                connect, read = timeout\n                resolved_timeout = TimeoutSauce(connect=connect, read=read)\n            except ValueError:\n                raise ValueError(\n                    f\"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, \"\n                    f\"or a single float to set both timeouts to the same value.\"\n                )\n        elif isinstance(timeout, TimeoutSauce):\n            resolved_timeout = timeout\n        else:\n            resolved_timeout = TimeoutSauce(connect=timeout, read=timeout)\n    \n        try:\n            resp = conn.urlopen(\n                method=request.method,\n                url=url,\n                body=request.body,  # type: ignore[arg-type]  # urllib3 stubs don't accept Iterable[bytes | str]\n                headers=request.headers,  # type: ignore[arg-type]  # urllib3#3072\n                redirect=False,\n                assert_same_host=False,\n                preload_content=False,\n                decode_content=False,\n                retries=self.max_retries,\n                timeout=resolved_timeout,\n                chunked=chunked,\n            )\n    \n        except (ProtocolError, OSError) as err:\n            raise ConnectionError(err, request=request)\n    \n        except MaxRetryError as e:\n            if isinstance(e.reason, ConnectTimeoutError):\n                # TODO: Remove this in 3.0.0: see #2811\n                if not isinstance(e.reason, NewConnectionError):\n                    raise ConnectTimeout(e, request=request)\n    \n            if isinstance(e.reason, ResponseError):\n                raise RetryError(e, request=request)\n    \n            if isinstance(e.reason, _ProxyError):\n                raise ProxyError(e, request=request)\n    \n            if isinstance(e.reason, _SSLError):\n                # This branch is for urllib3 v1.22 and later.\n                raise SSLError(e, request=request)\n    \n>           raise ConnectionError(e, request=request)\nE           requests.exceptions.ConnectionError: HTTPSConnectionPool(host='payments.internal.invalid', port=443): Max retries exceeded with url: /health (Caused by NameResolutionError(\"HTTPSConnection(host='payments.internal.invalid', port=443): Failed to resolve 'payments.internal.invalid' ([Errno 8] nodename nor servname provided, or not known)\"))\n\n.venv/lib/python3.13/site-packages/requests/adapters.py:729: ConnectionError",
+      "duration": 0.00322104200040485,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "env",
-        "hypothesis": "The test attempts a real HTTPS call to an internal-only hostname (payments.internal.invalid) that cannot be resolved in this test environment, indicating missing network/service access rather than a code defect.",
+        "hypothesis": "The test attempts to reach an internal host 'payments.internal.invalid' that cannot be resolved in this environment, indicating missing network/DNS access or a misconfigured endpoint rather than a code defect.",
         "confidence": "high",
-        "suggested_fix": "Mock/stub the payments health check HTTP call (e.g., via responses/requests-mock) or point it to a reachable test/staging endpoint, and ensure DNS/network access or a local stub service is configured for CI environments."
+        "suggested_fix": "Mock/stub the payments health endpoint in tests or run this test only in an environment with access to the internal payments service/DNS; verify the configured host is correct and reachable."
       }
     },
     {
@@ -61,15 +150,16 @@
       "outcome": "failed",
       "exc_type": "ConnectionError",
       "exc_message": "HTTPSConnectionPool(host='auth.corp.invalid', port=443): Max retries exceeded with url: /health (Caused by NameResolutionError(\"HTTPSConnection(host='auth.corp.invalid', port=443): Failed to resolve 'auth.corp.invalid' ([Errno 8] nodename nor servname provided, or not known)\"))",
-      "traceback": "...[truncated 23205 bytes]...\naredRequest object. Returns Response object.\n    \n        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.\n        :param stream: (optional) Whether to stream the request content.\n        :param timeout: (optional) How long to wait for the server to send\n            data before giving up, as a float, or a :ref:`(connect timeout,\n            read timeout) <timeouts>` tuple.\n        :type timeout: float or tuple or urllib3 Timeout object\n        :param verify: (optional) Either a boolean, in which case it controls whether\n            we verify the server's TLS certificate, or a string, in which case it\n            must be a path to a CA bundle to use\n        :param cert: (optional) Any user-provided SSL certificate to be trusted.\n        :param proxies: (optional) The proxies dictionary to apply to the request.\n        :rtype: requests.Response\n        \"\"\"\n    \n        assert _is_prepared(request)\n    \n        try:\n            conn = self.get_connection_with_tls_context(\n                request, verify, proxies=proxies, cert=cert\n            )\n        except LocationValueError as e:\n            raise InvalidURL(e, request=request)\n    \n        self.cert_verify(conn, request.url, verify, cert)\n        url = self.request_url(request, proxies)\n        self.add_headers(\n            request,\n            stream=stream,\n            timeout=timeout,\n            verify=verify,\n            cert=cert,\n            proxies=proxies,\n        )\n    \n        chunked = not (request.body is None or \"Content-Length\" in request.headers)\n    \n        if isinstance(timeout, tuple):\n            try:\n                connect, read = timeout\n                resolved_timeout = TimeoutSauce(connect=connect, read=read)\n            except ValueError:\n                raise ValueError(\n                    f\"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, \"\n                    f\"or a single float to set both timeouts to the same value.\"\n                )\n        elif isinstance(timeout, TimeoutSauce):\n            resolved_timeout = timeout\n        else:\n            resolved_timeout = TimeoutSauce(connect=timeout, read=timeout)\n    \n        try:\n            resp = conn.urlopen(\n                method=request.method,\n                url=url,\n                body=request.body,  # type: ignore[arg-type]  # urllib3 stubs don't accept Iterable[bytes | str]\n                headers=request.headers,  # type: ignore[arg-type]  # urllib3#3072\n                redirect=False,\n                assert_same_host=False,\n                preload_content=False,\n                decode_content=False,\n                retries=self.max_retries,\n                timeout=resolved_timeout,\n                chunked=chunked,\n            )\n    \n        except (ProtocolError, OSError) as err:\n            raise ConnectionError(err, request=request)\n    \n        except MaxRetryError as e:\n            if isinstance(e.reason, ConnectTimeoutError):\n                # TODO: Remove this in 3.0.0: see #2811\n                if not isinstance(e.reason, NewConnectionError):\n                    raise ConnectTimeout(e, request=request)\n    \n            if isinstance(e.reason, ResponseError):\n                raise RetryError(e, request=request)\n    \n            if isinstance(e.reason, _ProxyError):\n                raise ProxyError(e, request=request)\n    \n            if isinstance(e.reason, _SSLError):\n                # This branch is for urllib3 v1.22 and later.\n                raise SSLError(e, request=request)\n    \n>           raise ConnectionError(e, request=request)\nE           requests.exceptions.ConnectionError: HTTPSConnectionPool(host='auth.corp.invalid', port=443): Max retries exceeded with url: /health (Caused by NameResolutionError(\"HTTPSConnection(host='auth.corp.invalid', port=443): Failed to resolve 'auth.corp.invalid' ([Errno 8] nodename nor servname provided, or not known)\"))\n\n.venv/lib/python3.13/site-[REDACTED].py:729: ConnectionError",
-      "duration": 0.0023856670004533953,
+      "traceback": "...[truncated 23205 bytes]...\naredRequest object. Returns Response object.\n    \n        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.\n        :param stream: (optional) Whether to stream the request content.\n        :param timeout: (optional) How long to wait for the server to send\n            data before giving up, as a float, or a :ref:`(connect timeout,\n            read timeout) <timeouts>` tuple.\n        :type timeout: float or tuple or urllib3 Timeout object\n        :param verify: (optional) Either a boolean, in which case it controls whether\n            we verify the server's TLS certificate, or a string, in which case it\n            must be a path to a CA bundle to use\n        :param cert: (optional) Any user-provided SSL certificate to be trusted.\n        :param proxies: (optional) The proxies dictionary to apply to the request.\n        :rtype: requests.Response\n        \"\"\"\n    \n        assert _is_prepared(request)\n    \n        try:\n            conn = self.get_connection_with_tls_context(\n                request, verify, proxies=proxies, cert=cert\n            )\n        except LocationValueError as e:\n            raise InvalidURL(e, request=request)\n    \n        self.cert_verify(conn, request.url, verify, cert)\n        url = self.request_url(request, proxies)\n        self.add_headers(\n            request,\n            stream=stream,\n            timeout=timeout,\n            verify=verify,\n            cert=cert,\n            proxies=proxies,\n        )\n    \n        chunked = not (request.body is None or \"Content-Length\" in request.headers)\n    \n        if isinstance(timeout, tuple):\n            try:\n                connect, read = timeout\n                resolved_timeout = TimeoutSauce(connect=connect, read=read)\n            except ValueError:\n                raise ValueError(\n                    f\"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, \"\n                    f\"or a single float to set both timeouts to the same value.\"\n                )\n        elif isinstance(timeout, TimeoutSauce):\n            resolved_timeout = timeout\n        else:\n            resolved_timeout = TimeoutSauce(connect=timeout, read=timeout)\n    \n        try:\n            resp = conn.urlopen(\n                method=request.method,\n                url=url,\n                body=request.body,  # type: ignore[arg-type]  # urllib3 stubs don't accept Iterable[bytes | str]\n                headers=request.headers,  # type: ignore[arg-type]  # urllib3#3072\n                redirect=False,\n                assert_same_host=False,\n                preload_content=False,\n                decode_content=False,\n                retries=self.max_retries,\n                timeout=resolved_timeout,\n                chunked=chunked,\n            )\n    \n        except (ProtocolError, OSError) as err:\n            raise ConnectionError(err, request=request)\n    \n        except MaxRetryError as e:\n            if isinstance(e.reason, ConnectTimeoutError):\n                # TODO: Remove this in 3.0.0: see #2811\n                if not isinstance(e.reason, NewConnectionError):\n                    raise ConnectTimeout(e, request=request)\n    \n            if isinstance(e.reason, ResponseError):\n                raise RetryError(e, request=request)\n    \n            if isinstance(e.reason, _ProxyError):\n                raise ProxyError(e, request=request)\n    \n            if isinstance(e.reason, _SSLError):\n                # This branch is for urllib3 v1.22 and later.\n                raise SSLError(e, request=request)\n    \n>           raise ConnectionError(e, request=request)\nE           requests.exceptions.ConnectionError: HTTPSConnectionPool(host='auth.corp.invalid', port=443): Max retries exceeded with url: /health (Caused by NameResolutionError(\"HTTPSConnection(host='auth.corp.invalid', port=443): Failed to resolve 'auth.corp.invalid' ([Errno 8] nodename nor servname provided, or not known)\"))\n\n.venv/lib/python3.13/site-packages/requests/adapters.py:729: ConnectionError",
+      "duration": 0.0020488749996729894,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "env",
-        "hypothesis": "The test attempts to reach a real external host (auth.corp.invalid) which cannot be resolved in this environment, indicating a missing network/DNS/service dependency rather than a code defect.",
+        "hypothesis": "The test attempts a real network call to an internal/corp hostname (auth.corp.invalid) that cannot be resolved in the current test environment, indicating missing network access or DNS configuration rather than a code defect.",
         "confidence": "high",
-        "suggested_fix": "Mock or stub the external auth service call (e.g., using responses/requests-mock) or configure a test environment with proper DNS/network access to auth.corp.invalid, and mark this test as requiring network/integration environment."
+        "suggested_fix": "Mock or stub the HTTP call to auth.corp.invalid in tests, or ensure the test environment has network/DNS access to the corp auth service (e.g., via VPN or a local stub server), and skip this test when running outside that environment."
       }
     },
     {
@@ -81,15 +171,16 @@
       "outcome": "failed",
       "exc_type": "ConnectionError",
       "exc_message": "HTTPSConnectionPool(host='cache.svc.invalid', port=443): Max retries exceeded with url: /ping (Caused by NameResolutionError(\"HTTPSConnection(host='cache.svc.invalid', port=443): Failed to resolve 'cache.svc.invalid' ([Errno 8] nodename nor servname provided, or not known)\"))",
-      "traceback": "...[truncated 23071 bytes]...\neparedRequest object. Returns Response object.\n    \n        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.\n        :param stream: (optional) Whether to stream the request content.\n        :param timeout: (optional) How long to wait for the server to send\n            data before giving up, as a float, or a :ref:`(connect timeout,\n            read timeout) <timeouts>` tuple.\n        :type timeout: float or tuple or urllib3 Timeout object\n        :param verify: (optional) Either a boolean, in which case it controls whether\n            we verify the server's TLS certificate, or a string, in which case it\n            must be a path to a CA bundle to use\n        :param cert: (optional) Any user-provided SSL certificate to be trusted.\n        :param proxies: (optional) The proxies dictionary to apply to the request.\n        :rtype: requests.Response\n        \"\"\"\n    \n        assert _is_prepared(request)\n    \n        try:\n            conn = self.get_connection_with_tls_context(\n                request, verify, proxies=proxies, cert=cert\n            )\n        except LocationValueError as e:\n            raise InvalidURL(e, request=request)\n    \n        self.cert_verify(conn, request.url, verify, cert)\n        url = self.request_url(request, proxies)\n        self.add_headers(\n            request,\n            stream=stream,\n            timeout=timeout,\n            verify=verify,\n            cert=cert,\n            proxies=proxies,\n        )\n    \n        chunked = not (request.body is None or \"Content-Length\" in request.headers)\n    \n        if isinstance(timeout, tuple):\n            try:\n                connect, read = timeout\n                resolved_timeout = TimeoutSauce(connect=connect, read=read)\n            except ValueError:\n                raise ValueError(\n                    f\"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, \"\n                    f\"or a single float to set both timeouts to the same value.\"\n                )\n        elif isinstance(timeout, TimeoutSauce):\n            resolved_timeout = timeout\n        else:\n            resolved_timeout = TimeoutSauce(connect=timeout, read=timeout)\n    \n        try:\n            resp = conn.urlopen(\n                method=request.method,\n                url=url,\n                body=request.body,  # type: ignore[arg-type]  # urllib3 stubs don't accept Iterable[bytes | str]\n                headers=request.headers,  # type: ignore[arg-type]  # urllib3#3072\n                redirect=False,\n                assert_same_host=False,\n                preload_content=False,\n                decode_content=False,\n                retries=self.max_retries,\n                timeout=resolved_timeout,\n                chunked=chunked,\n            )\n    \n        except (ProtocolError, OSError) as err:\n            raise ConnectionError(err, request=request)\n    \n        except MaxRetryError as e:\n            if isinstance(e.reason, ConnectTimeoutError):\n                # TODO: Remove this in 3.0.0: see #2811\n                if not isinstance(e.reason, NewConnectionError):\n                    raise ConnectTimeout(e, request=request)\n    \n            if isinstance(e.reason, ResponseError):\n                raise RetryError(e, request=request)\n    \n            if isinstance(e.reason, _ProxyError):\n                raise ProxyError(e, request=request)\n    \n            if isinstance(e.reason, _SSLError):\n                # This branch is for urllib3 v1.22 and later.\n                raise SSLError(e, request=request)\n    \n>           raise ConnectionError(e, request=request)\nE           requests.exceptions.ConnectionError: HTTPSConnectionPool(host='cache.svc.invalid', port=443): Max retries exceeded with url: /ping (Caused by NameResolutionError(\"HTTPSConnection(host='cache.svc.invalid', port=443): Failed to resolve 'cache.svc.invalid' ([Errno 8] nodename nor servname provided, or not known)\"))\n\n.venv/lib/python3.13/site-[REDACTED].py:729: ConnectionError",
-      "duration": 0.002223458000116807,
+      "traceback": "...[truncated 23071 bytes]...\neparedRequest object. Returns Response object.\n    \n        :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.\n        :param stream: (optional) Whether to stream the request content.\n        :param timeout: (optional) How long to wait for the server to send\n            data before giving up, as a float, or a :ref:`(connect timeout,\n            read timeout) <timeouts>` tuple.\n        :type timeout: float or tuple or urllib3 Timeout object\n        :param verify: (optional) Either a boolean, in which case it controls whether\n            we verify the server's TLS certificate, or a string, in which case it\n            must be a path to a CA bundle to use\n        :param cert: (optional) Any user-provided SSL certificate to be trusted.\n        :param proxies: (optional) The proxies dictionary to apply to the request.\n        :rtype: requests.Response\n        \"\"\"\n    \n        assert _is_prepared(request)\n    \n        try:\n            conn = self.get_connection_with_tls_context(\n                request, verify, proxies=proxies, cert=cert\n            )\n        except LocationValueError as e:\n            raise InvalidURL(e, request=request)\n    \n        self.cert_verify(conn, request.url, verify, cert)\n        url = self.request_url(request, proxies)\n        self.add_headers(\n            request,\n            stream=stream,\n            timeout=timeout,\n            verify=verify,\n            cert=cert,\n            proxies=proxies,\n        )\n    \n        chunked = not (request.body is None or \"Content-Length\" in request.headers)\n    \n        if isinstance(timeout, tuple):\n            try:\n                connect, read = timeout\n                resolved_timeout = TimeoutSauce(connect=connect, read=read)\n            except ValueError:\n                raise ValueError(\n                    f\"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, \"\n                    f\"or a single float to set both timeouts to the same value.\"\n                )\n        elif isinstance(timeout, TimeoutSauce):\n            resolved_timeout = timeout\n        else:\n            resolved_timeout = TimeoutSauce(connect=timeout, read=timeout)\n    \n        try:\n            resp = conn.urlopen(\n                method=request.method,\n                url=url,\n                body=request.body,  # type: ignore[arg-type]  # urllib3 stubs don't accept Iterable[bytes | str]\n                headers=request.headers,  # type: ignore[arg-type]  # urllib3#3072\n                redirect=False,\n                assert_same_host=False,\n                preload_content=False,\n                decode_content=False,\n                retries=self.max_retries,\n                timeout=resolved_timeout,\n                chunked=chunked,\n            )\n    \n        except (ProtocolError, OSError) as err:\n            raise ConnectionError(err, request=request)\n    \n        except MaxRetryError as e:\n            if isinstance(e.reason, ConnectTimeoutError):\n                # TODO: Remove this in 3.0.0: see #2811\n                if not isinstance(e.reason, NewConnectionError):\n                    raise ConnectTimeout(e, request=request)\n    \n            if isinstance(e.reason, ResponseError):\n                raise RetryError(e, request=request)\n    \n            if isinstance(e.reason, _ProxyError):\n                raise ProxyError(e, request=request)\n    \n            if isinstance(e.reason, _SSLError):\n                # This branch is for urllib3 v1.22 and later.\n                raise SSLError(e, request=request)\n    \n>           raise ConnectionError(e, request=request)\nE           requests.exceptions.ConnectionError: HTTPSConnectionPool(host='cache.svc.invalid', port=443): Max retries exceeded with url: /ping (Caused by NameResolutionError(\"HTTPSConnection(host='cache.svc.invalid', port=443): Failed to resolve 'cache.svc.invalid' ([Errno 8] nodename nor servname provided, or not known)\"))\n\n.venv/lib/python3.13/site-packages/requests/adapters.py:729: ConnectionError",
+      "duration": 0.0020460830000956776,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "env",
-        "hypothesis": "The test attempts a real network call to an unresolvable host 'cache.svc.invalid', indicating a missing/misconfigured external cache service dependency rather than a code defect.",
+        "hypothesis": "The test requires network access to a cache service host 'cache.svc.invalid' which cannot be resolved, indicating a missing/misconfigured environment dependency rather than a code defect.",
         "confidence": "high",
-        "suggested_fix": "Mock/stub the cache service HTTP call in the test or point it to a reachable test/staging endpoint, and ensure required environment configuration (DNS/service URL) is set up before running the test."
+        "suggested_fix": "Ensure the test environment has proper DNS/network access to the cache service, or mock/stub the HTTP call in the test instead of relying on an external service."
       }
     },
     {
@@ -99,17 +190,18 @@
       ],
       "phase": "call",
       "outcome": "failed",
-      "exc_type": "ReadTimeout",
-      "exc_message": "HTTPSConnectionPool(host='httpbin.org', port=443): Read timed out. (read timeout=15)",
-      "traceback": "...[truncated 16079 bytes]...\n      data before giving up, as a float, or a :ref:`(connect timeout,\n            read timeout) <timeouts>` tuple.\n        :type timeout: float or tuple or urllib3 Timeout object\n        :param verify: (optional) Either a boolean, in which case it controls whether\n            we verify the server's TLS certificate, or a string, in which case it\n            must be a path to a CA bundle to use\n        :param cert: (optional) Any user-provided SSL certificate to be trusted.\n        :param proxies: (optional) The proxies dictionary to apply to the request.\n        :rtype: requests.Response\n        \"\"\"\n    \n        assert _is_prepared(request)\n    \n        try:\n            conn = self.get_connection_with_tls_context(\n                request, verify, proxies=proxies, cert=cert\n            )\n        except LocationValueError as e:\n            raise InvalidURL(e, request=request)\n    \n        self.cert_verify(conn, request.url, verify, cert)\n        url = self.request_url(request, proxies)\n        self.add_headers(\n            request,\n            stream=stream,\n            timeout=timeout,\n            verify=verify,\n            cert=cert,\n            proxies=proxies,\n        )\n    \n        chunked = not (request.body is None or \"Content-Length\" in request.headers)\n    \n        if isinstance(timeout, tuple):\n            try:\n                connect, read = timeout\n                resolved_timeout = TimeoutSauce(connect=connect, read=read)\n            except ValueError:\n                raise ValueError(\n                    f\"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, \"\n                    f\"or a single float to set both timeouts to the same value.\"\n                )\n        elif isinstance(timeout, TimeoutSauce):\n            resolved_timeout = timeout\n        else:\n            resolved_timeout = TimeoutSauce(connect=timeout, read=timeout)\n    \n        try:\n            resp = conn.urlopen(\n                method=request.method,\n                url=url,\n                body=request.body,  # type: ignore[arg-type]  # urllib3 stubs don't accept Iterable[bytes | str]\n                headers=request.headers,  # type: ignore[arg-type]  # urllib3#3072\n                redirect=False,\n                assert_same_host=False,\n                preload_content=False,\n                decode_content=False,\n                retries=self.max_retries,\n                timeout=resolved_timeout,\n                chunked=chunked,\n            )\n    \n        except (ProtocolError, OSError) as err:\n            raise ConnectionError(err, request=request)\n    \n        except MaxRetryError as e:\n            if isinstance(e.reason, ConnectTimeoutError):\n                # TODO: Remove this in 3.0.0: see #2811\n                if not isinstance(e.reason, NewConnectionError):\n                    raise ConnectTimeout(e, request=request)\n    \n            if isinstance(e.reason, ResponseError):\n                raise RetryError(e, request=request)\n    \n            if isinstance(e.reason, _ProxyError):\n                raise ProxyError(e, request=request)\n    \n            if isinstance(e.reason, _SSLError):\n                # This branch is for urllib3 v1.22 and later.\n                raise SSLError(e, request=request)\n    \n            raise ConnectionError(e, request=request)\n    \n        except ClosedPoolError as e:\n            raise ConnectionError(e, request=request)\n    \n        except _ProxyError as e:\n            raise ProxyError(e)\n    \n        except (_SSLError, _HTTPError) as e:\n            if isinstance(e, _SSLError):\n                # This branch is for urllib3 versions earlier than v1.22\n                raise SSLError(e, request=request)\n            elif isinstance(e, ReadTimeoutError):\n>               raise ReadTimeout(e, request=request)\nE               requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='httpbin.org', port=443): Read timed out. (read timeout=15)\n\n.venv/lib/python3.13/site-[REDACTED].py:742: ReadTimeout",
-      "duration": 15.480369917000644,
+      "exc_type": "HTTPError",
+      "exc_message": "503 Server Error: Service Temporarily Unavailable for url: https://httpbin.org/status/500",
+      "traceback": "def test_orders_endpoint() -> None:\n        resp = requests.get(\"https://httpbin.org/status/500\", timeout=15)\n>       resp.raise_for_status()\n\nexamples/test_environment.py:24: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <Response [503]>\n\n    def raise_for_status(self) -> None:\n        \"\"\"Raises :class:`HTTPError`, if one occurred.\"\"\"\n    \n        http_error_msg = \"\"\n        if isinstance(self.reason, bytes):\n            # We attempt to decode utf-8 first because some servers\n            # choose to localize their reason strings. If the string\n            # isn't utf-8, we fall back to iso-8859-1 for all other\n            # encodings. (See PR #3538)\n            try:\n                reason = self.reason.decode(\"utf-8\")\n            except UnicodeDecodeError:\n                reason = self.reason.decode(\"iso-8859-1\")\n        else:\n            reason = self.reason\n    \n        if 400 <= self.status_code < 500:\n            http_error_msg = (\n                f\"{self.status_code} Client Error: {reason} for url: {self.url}\"\n            )\n    \n        elif 500 <= self.status_code < 600:\n            http_error_msg = (\n                f\"{self.status_code} Server Error: {reason} for url: {self.url}\"\n            )\n    \n        if http_error_msg:\n>           raise HTTPError(http_error_msg, response=self)\nE           requests.exceptions.HTTPError: 503 Server Error: Service Temporarily Unavailable for url: https://httpbin.org/status/500\n\n.venv/lib/python3.13/site-packages/requests/models.py:1167: HTTPError",
+      "duration": 0.61817904200052,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "env",
-        "hypothesis": "The test makes a live network call to an external service (httpbin.org) which timed out, indicating a network/infrastructure issue rather than a code defect.",
+        "hypothesis": "The test depends on an external network service (httpbin.org) which returned a 503 Service Unavailable, an infrastructure/external dependency issue rather than a code defect.",
         "confidence": "high",
-        "suggested_fix": "Mock the external HTTP call (e.g. with responses/requests-mock) instead of hitting httpbin.org, or increase timeout and add retry/skip logic for network-dependent tests in CI."
+        "suggested_fix": "Avoid relying on live external services in tests; mock the HTTP call (e.g., with responses/requests-mock) or point to a local/stable test server instead of httpbin.org."
       }
     },
     {
@@ -119,17 +211,18 @@
       ],
       "phase": "call",
       "outcome": "failed",
-      "exc_type": "ReadTimeout",
-      "exc_message": "HTTPSConnectionPool(host='httpbin.org', port=443): Read timed out. (read timeout=15)",
-      "traceback": "...[truncated 16082 bytes]...\n      data before giving up, as a float, or a :ref:`(connect timeout,\n            read timeout) <timeouts>` tuple.\n        :type timeout: float or tuple or urllib3 Timeout object\n        :param verify: (optional) Either a boolean, in which case it controls whether\n            we verify the server's TLS certificate, or a string, in which case it\n            must be a path to a CA bundle to use\n        :param cert: (optional) Any user-provided SSL certificate to be trusted.\n        :param proxies: (optional) The proxies dictionary to apply to the request.\n        :rtype: requests.Response\n        \"\"\"\n    \n        assert _is_prepared(request)\n    \n        try:\n            conn = self.get_connection_with_tls_context(\n                request, verify, proxies=proxies, cert=cert\n            )\n        except LocationValueError as e:\n            raise InvalidURL(e, request=request)\n    \n        self.cert_verify(conn, request.url, verify, cert)\n        url = self.request_url(request, proxies)\n        self.add_headers(\n            request,\n            stream=stream,\n            timeout=timeout,\n            verify=verify,\n            cert=cert,\n            proxies=proxies,\n        )\n    \n        chunked = not (request.body is None or \"Content-Length\" in request.headers)\n    \n        if isinstance(timeout, tuple):\n            try:\n                connect, read = timeout\n                resolved_timeout = TimeoutSauce(connect=connect, read=read)\n            except ValueError:\n                raise ValueError(\n                    f\"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, \"\n                    f\"or a single float to set both timeouts to the same value.\"\n                )\n        elif isinstance(timeout, TimeoutSauce):\n            resolved_timeout = timeout\n        else:\n            resolved_timeout = TimeoutSauce(connect=timeout, read=timeout)\n    \n        try:\n            resp = conn.urlopen(\n                method=request.method,\n                url=url,\n                body=request.body,  # type: ignore[arg-type]  # urllib3 stubs don't accept Iterable[bytes | str]\n                headers=request.headers,  # type: ignore[arg-type]  # urllib3#3072\n                redirect=False,\n                assert_same_host=False,\n                preload_content=False,\n                decode_content=False,\n                retries=self.max_retries,\n                timeout=resolved_timeout,\n                chunked=chunked,\n            )\n    \n        except (ProtocolError, OSError) as err:\n            raise ConnectionError(err, request=request)\n    \n        except MaxRetryError as e:\n            if isinstance(e.reason, ConnectTimeoutError):\n                # TODO: Remove this in 3.0.0: see #2811\n                if not isinstance(e.reason, NewConnectionError):\n                    raise ConnectTimeout(e, request=request)\n    \n            if isinstance(e.reason, ResponseError):\n                raise RetryError(e, request=request)\n    \n            if isinstance(e.reason, _ProxyError):\n                raise ProxyError(e, request=request)\n    \n            if isinstance(e.reason, _SSLError):\n                # This branch is for urllib3 v1.22 and later.\n                raise SSLError(e, request=request)\n    \n            raise ConnectionError(e, request=request)\n    \n        except ClosedPoolError as e:\n            raise ConnectionError(e, request=request)\n    \n        except _ProxyError as e:\n            raise ProxyError(e)\n    \n        except (_SSLError, _HTTPError) as e:\n            if isinstance(e, _SSLError):\n                # This branch is for urllib3 versions earlier than v1.22\n                raise SSLError(e, request=request)\n            elif isinstance(e, ReadTimeoutError):\n>               raise ReadTimeout(e, request=request)\nE               requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='httpbin.org', port=443): Read timed out. (read timeout=15)\n\n.venv/lib/python3.13/site-[REDACTED].py:742: ReadTimeout",
-      "duration": 15.42393658399942,
+      "exc_type": "HTTPError",
+      "exc_message": "503 Server Error: Service Temporarily Unavailable for url: https://httpbin.org/status/503",
+      "traceback": "def test_inventory_endpoint() -> None:\n        resp = requests.get(\"https://httpbin.org/status/503\", timeout=15)\n>       resp.raise_for_status()\n\nexamples/test_environment.py:30: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <Response [503]>\n\n    def raise_for_status(self) -> None:\n        \"\"\"Raises :class:`HTTPError`, if one occurred.\"\"\"\n    \n        http_error_msg = \"\"\n        if isinstance(self.reason, bytes):\n            # We attempt to decode utf-8 first because some servers\n            # choose to localize their reason strings. If the string\n            # isn't utf-8, we fall back to iso-8859-1 for all other\n            # encodings. (See PR #3538)\n            try:\n                reason = self.reason.decode(\"utf-8\")\n            except UnicodeDecodeError:\n                reason = self.reason.decode(\"iso-8859-1\")\n        else:\n            reason = self.reason\n    \n        if 400 <= self.status_code < 500:\n            http_error_msg = (\n                f\"{self.status_code} Client Error: {reason} for url: {self.url}\"\n            )\n    \n        elif 500 <= self.status_code < 600:\n            http_error_msg = (\n                f\"{self.status_code} Server Error: {reason} for url: {self.url}\"\n            )\n    \n        if http_error_msg:\n>           raise HTTPError(http_error_msg, response=self)\nE           requests.exceptions.HTTPError: 503 Server Error: Service Temporarily Unavailable for url: https://httpbin.org/status/503\n\n.venv/lib/python3.13/site-packages/requests/models.py:1167: HTTPError",
+      "duration": 0.6924529589996382,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "env",
-        "hypothesis": "The test depends on a live external network call to httpbin.org which timed out, indicating an environment/network issue rather than a code defect.",
+        "hypothesis": "The test deliberately hits httpbin.org/status/503, an external endpoint that returns a 503, and raise_for_status() throws as designed, indicating an external service/test design issue rather than application code regression.",
         "confidence": "high",
-        "suggested_fix": "Mock or stub the external HTTP call (e.g., using responses/httpretty) instead of relying on a real network request to httpbin.org, or increase timeout and add retry logic with proper handling for flaky network conditions in CI."
+        "suggested_fix": "Avoid depending on external live endpoints in tests; mock the HTTP call or use a local test server, and if testing error handling, wrap the call to expect the HTTPError instead of letting it propagate."
       }
     },
     {
@@ -142,14 +235,15 @@
       "exc_type": "AssertionError",
       "exc_message": "assert 503 == 200\n +  where 503 = <Response [503]>.status_code",
       "traceback": "def test_slow_upstream() -> None:\n        resp = requests.get(\"https://httpbin.org/delay/10\", timeout=2)\n>       assert resp.status_code == 200\nE       assert 503 == 200\nE        +  where 503 = <Response [503]>.status_code\n\nexamples/test_environment.py:36: AssertionError",
-      "duration": 0.621858625000641,
+      "duration": 0.5658504169996377,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "env",
-        "hypothesis": "The test depends on an external network service (httpbin.org) which returned a 503 or timed out due to network/service issues, not a code defect.",
+        "hypothesis": "The test depends on an external network service (httpbin.org) which returned a 503 or timed out, indicating an infrastructure/network issue rather than a code defect.",
         "confidence": "high",
-        "suggested_fix": "Avoid relying on live external services in tests; mock the HTTP call (e.g., with responses/requests-mock) or point to a local test server, and remove hard dependency on httpbin.org's availability/timing."
+        "suggested_fix": "Avoid relying on live external services in tests; mock the HTTP call or use a local test server with a controlled delay/response instead of hitting httpbin.org."
       }
     },
     {
@@ -160,16 +254,17 @@
       "phase": "call",
       "outcome": "failed",
       "exc_type": "AssertionError",
-      "exc_message": "assert -1900 == 80\n +  where -1900 = <function apply_discount at 0x10c5e8900>(100, 20)\n +    where <function apply_discount at 0x10c5e8900> = shop.apply_discount",
-      "traceback": "def test_discounted_price() -> None:\n>       assert shop.apply_discount(100, 20) == 80\nE       assert -1900 == 80\nE        +  where -1900 = <function apply_discount at 0x10c5e8900>(100, 20)\nE        +    where <function apply_discount at 0x10c5e8900> = shop.apply_discount\n\nexamples/test_regressions.py:9: AssertionError",
-      "duration": 0.000209666000046127,
+      "exc_message": "assert -1900 == 80\n +  where -1900 = <function apply_discount at 0x1121f6980>(100, 20)\n +    where <function apply_discount at 0x1121f6980> = shop.apply_discount",
+      "traceback": "def test_discounted_price() -> None:\n>       assert shop.apply_discount(100, 20) == 80\nE       assert -1900 == 80\nE        +  where -1900 = <function apply_discount at 0x1121f6980>(100, 20)\nE        +    where <function apply_discount at 0x1121f6980> = shop.apply_discount\n\nexamples/test_regressions.py:9: AssertionError",
+      "duration": 0.00015116599934117403,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "regression",
-        "hypothesis": "apply_discount's logic is broken, likely applying the discount as a multiplier or subtracting incorrectly (e.g., price - price*discount instead of price - price*discount/100), producing a large negative value instead of the expected 80.",
+        "hypothesis": "apply_discount now returns an incorrect value (-1900 instead of 80 for price=100, discount=20), indicating faulty logic in the discount calculation, likely treating the discount as a multiplier or applying it incorrectly rather than as a percentage subtraction.",
         "confidence": "high",
-        "suggested_fix": "Review and fix the apply_discount implementation to correctly compute price - (price * discount / 100), e.g. ensure discount percentage is divided by 100 before multiplying."
+        "suggested_fix": "Review and fix the implementation of shop.apply_discount to correctly compute price - (price * discount / 100) instead of whatever erroneous formula is producing -1900."
       }
     },
     {
@@ -182,14 +277,15 @@
       "exc_type": "ZeroDivisionError",
       "exc_message": "division by zero",
       "traceback": "def test_average_score() -> None:\n>       assert shop.average([]) >= 0\n               ^^^^^^^^^^^^^^^^\n\nexamples/test_regressions.py:13: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nvalues = []\n\n    def average(values: list[float]) -> float:\n>       return sum(values) / len(values)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^\nE       ZeroDivisionError: division by zero\n\nexamples/shop.py:22: ZeroDivisionError",
-      "duration": 0.0001082500002667075,
+      "duration": 7.266600005095825e-05,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "regression",
-        "hypothesis": "The average() function does not handle empty lists, causing a ZeroDivisionError instead of returning a safe default.",
+        "hypothesis": "The average() function does not handle empty lists, causing a ZeroDivisionError when dividing by len(values)==0.",
         "confidence": "high",
-        "suggested_fix": "Add a guard in shop.average() to return 0 (or another sensible default) when values is empty, e.g. `return sum(values) / len(values) if values else 0`."
+        "suggested_fix": "Add a guard in shop.average() to return 0 (or handle appropriately) when values is empty, e.g., `if not values: return 0`."
       }
     },
     {
@@ -202,14 +298,15 @@
       "exc_type": "IndexError",
       "exc_message": "list index out of range",
       "traceback": "def test_first_cart_item() -> None:\n>       assert shop.first_item([]) == \"milk\"\n               ^^^^^^^^^^^^^^^^^^^\n\nexamples/test_regressions.py:17: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nitems = []\n\n    def first_item(items: list[str]) -> str:\n>       return items[0]\n               ^^^^^^^^\nE       IndexError: list index out of range\n\nexamples/shop.py:26: IndexError",
-      "duration": 8.337500003108289e-05,
+      "duration": 6.737500007147901e-05,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test calls shop.first_item([]) with an empty list and expects \"milk\", but the function naturally raises IndexError on empty input, indicating the test itself uses an invalid/stale input for the intended assertion.",
+        "hypothesis": "\">The test calls shop.first_item([]) and expectsts \\\"milk\\\", but the function has no handling for empty lists and simply indexes items[0], so the test's expectation of a default value is incorrect for the given implementation.",
         "confidence": "high",
-        "suggested_fix": "Update the test to call shop.first_item with a non-empty list (e.g., shop.first_item([\"milk\", \"eggs\"])) or explicitly test that an empty list raises IndexError instead of expecting a return value."
+        "suggested_fix": "\">Updateher fix first_item to handle empty lists and return a default (e.g., \\\"milk\\\") or update correctly reflect that an empty list should raise an error and update the test's expectation accordingly."
       }
     },
     {
@@ -221,15 +318,16 @@
       "outcome": "failed",
       "exc_type": "ValueError",
       "exc_message": "invalid literal for int() with base 10: 'N/A'",
-      "traceback": "def test_order_total() -> None:\n>       assert shop.total_cents([\"1099\", \"N/A\", \"500\"]) == 1599\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nexamples/test_regressions.py:21: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \nexamples/shop.py:30: in total_cents\n    return sum(int(p) for p in prices)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\n.0 = <list_iterator object at 0x10c685450>\n\n>   return sum(int(p) for p in prices)\n               ^^^^^^\nE   ValueError: invalid literal for int() with base 10: 'N/A'\n\nexamples/shop.py:30: ValueError",
-      "duration": 7.950000053824624e-05,
+      "traceback": "def test_order_total() -> None:\n>       assert shop.total_cents([\"1099\", \"N/A\", \"500\"]) == 1599\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nexamples/test_regressions.py:21: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \nexamples/shop.py:30: in total_cents\n    return sum(int(p) for p in prices)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\n.0 = <list_iterator object at 0x1121dad10>\n\n>   return sum(int(p) for p in prices)\n               ^^^^^^\nE   ValueError: invalid literal for int() with base 10: 'N/A'\n\nexamples/shop.py:30: ValueError",
+      "duration": 6.300000040937448e-05,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "\">The test passes a non-numeric string 'N N A A A''A sha total_cents, which the function doesn't handle invalid input, causing an unhandled ValueError.",
-        "confidence": "high",
-        "suggested_fix": "Either update total_cents to skip/validate non-numeric entries (e.g., filter or raise a clear error) or change the test to only pass valid numeric price strings, and add an explicit test for invalid input handling."
+        "hypothesis": "The test passes a non-numeric value 'N/A' into total_cents, which the function does not handle, causing int() to raise ValueError, but the test expects a valid total, implying either the test input is invalid or the function is expected to skip/handle non-numeric entries which it doesn't currently do.",
+        "confidence": "medium",
+        "suggested_fix": "Either fix the test to only pass valid numeric strings, or update total_cents to filter/handle non-numeric entries like 'N/A' (e.g., skip them or raise a clearer error) if that's the intended behavior."
       }
     },
     {
@@ -242,14 +340,15 @@
       "exc_type": "KeyError",
       "exc_message": "'first'",
       "traceback": "def test_customer_full_name() -> None:\n>       assert shop.full_name({\"firstName\": \"Ada\", \"lastName\": \"Lovelace\"})\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nexamples/test_regressions.py:25: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nuser = {'firstName': 'Ada', 'lastName': 'Lovelace'}\n\n    def full_name(user: dict) -> str:\n>       return user[\"first\"] + \" \" + user[\"last\"]\n               ^^^^^^^^^^^^^\nE       KeyError: 'first'\n\nexamples/shop.py:34: KeyError",
-      "duration": 8.795799931249348e-05,
+      "duration": 5.6542000493209343e-05,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "regression",
-        "hypothesis": "shop.full_name expects keys 'first' and 'last' but the test (and likely upstream data) now uses 'firstName'/'lastName', indicating the function's expected schema is out of sync with the input format.",
+        "hypothesis": "shop.full_name uses outdated key names ('first'/'last') while the expected user dict schema uses 'firstName'/'lastName', causing a KeyError.",
         "confidence": "high",
-        "suggested_fix": "Update shop.full_name to use user['firstName'] and user['lastName'] to match the current data schema."
+        "suggested_fix": "Update shop.full_name to use user['firstName'] and user['lastName'] instead of 'first' and 'last'."
       }
     },
     {
@@ -262,14 +361,15 @@
       "exc_type": "AttributeError",
       "exc_message": "'NoneType' object has no attribute 'upper'",
       "traceback": "def test_label_shout() -> None:\n>       assert shop.shout(None) == \"SALE\"\n               ^^^^^^^^^^^^^^^^\n\nexamples/test_regressions.py:29: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\ntext = None\n\n    def shout(text: str | None) -> str:\n>       return text.upper()\n               ^^^^^^^^^^\nE       AttributeError: 'NoneType' object has no attribute 'upper'\n\nexamples/shop.py:38: AttributeError",
-      "duration": 6.462500005000038e-05,
+      "duration": 5.454199981613783e-05,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
-        "category": "regression",
-        "hypothesis": "shout() declares text as Optional[str] but doesn't handle the None case before calling .upper(), causing an AttributeError.",
-        "confidence": "high",
-        "suggested_fix": "Add a None check in shout(), e.g. return \"\" if text is None else text.upper(), or update the function signature/tests to not allow None."
+        "category": "test_bug",
+        "hypothesis": "The shout function's signature allows None but does not handle it, and the test calls shout(None) expecting \"SALE\" without the function implementing None handling, indicating either the test has a wrong expectation or the function is missing a None-check; given no evidence of recent behavior change, the test's assumption that shout(None) returns \"SALE\" appears incorrect/stale.",
+        "confidence": "medium",
+        "suggested_fix": "Either update shout() to handle None input explicitly (e.g., return a default like \"SALE\" or raise a clear error) or fix the test to pass a valid string instead of None."
       }
     },
     {
@@ -282,14 +382,15 @@
       "exc_type": "TypeError",
       "exc_message": "can't multiply sequence by non-int of type 'float'",
       "traceback": "def test_line_item_total() -> None:\n>       assert shop.line_total(\"2\", 9.99) == 19.98\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nexamples/test_regressions.py:33: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nqty = '2', price = 9.99\n\n    def line_total(qty: int, price: float) -> float:\n>       return qty * price\n               ^^^^^^^^^^^\nE       TypeError: can't multiply sequence by non-int of type 'float'\n\nexamples/shop.py:42: TypeError",
-      "duration": 6.487500013463432e-05,
+      "duration": 5.383299958339194e-05,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test passes qty as a string \"2\" instead of an int 2, causing the multiplication to fail since line_total expects an int quantity.",
+        "hypothesis": "The test calls line_total with qty as a string \"2\" instead of an int, violating the function's expected int type and causing the multiplication to fail.",
         "confidence": "high",
-        "suggested_fix": "Update the test to call shop.line_total(2, 9.99) instead of shop.line_total(\"2\", 9.99)."
+        "suggested_fix": "Update the test to pass qty as an int, e.g. shop.line_total(2, 9.99), instead of the string \"2\"."
       }
     },
     {
@@ -300,16 +401,17 @@
       "phase": "call",
       "outcome": "failed",
       "exc_type": "AssertionError",
-      "exc_message": "assert 9 == 10\n +  where 9 = <function post_count at 0x10c5e8ea0>(1)\n +    where <function post_count at 0x10c5e8ea0> = shop.post_count",
-      "traceback": "def test_user_post_count() -> None:\n>       assert shop.post_count(1) == 10\nE       assert 9 == 10\nE        +  where 9 = <function post_count at 0x10c5e8ea0>(1)\nE        +    where <function post_count at 0x10c5e8ea0> = shop.post_count\n\nexamples/test_regressions.py:37: AssertionError",
-      "duration": 0.27140145799967286,
+      "exc_message": "assert 9 == 10\n +  where 9 = <function post_count at 0x1121f6f20>(1)\n +    where <function post_count at 0x1121f6f20> = shop.post_count",
+      "traceback": "def test_user_post_count() -> None:\n>       assert shop.post_count(1) == 10\nE       assert 9 == 10\nE        +  where 9 = <function post_count at 0x1121f6f20>(1)\nE        +    where <function post_count at 0x1121f6f20> = shop.post_count\n\nexamples/test_regressions.py:37: AssertionError",
+      "duration": 0.28374445800000103,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
-        "category": "regression",
-        "hypothesis": "The post_count function or underlying data logic changed and now returns 9 instead of the expected 10, indicating a code regression rather than a test or environment issue.",
-        "confidence": "medium",
-        "suggested_fix": "Investigate recent changes to shop.post_count (or its data source) to determine why it undercounts posts by one, and fix the counting logic or off-by-one error."
+        "category": "unknown",
+        "hypothesis": "post_count(1) returns 9 instead of the expected 10, but without more context it's unclear whether the function logic changed (regression) or the expected test value is stale (test_bug).",
+        "confidence": "low",
+        "suggested_fix": "Inspect the implementation of shop.post_count and the underlying data/fixture for user 1 to determine whether the count logic or the test's expected value is incorrect."
       }
     },
     {
@@ -322,14 +424,15 @@
       "exc_type": "KeyError",
       "exc_message": "'child'",
       "traceback": "def test_tree_depth() -> None:\n>       assert shop.depth({\"child\": {\"value\": 1}}) == 2\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nexamples/test_regressions.py:41: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \nexamples/shop.py:46: in depth\n    return 1 + depth(node[\"child\"])\n               ^^^^^^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nnode = {'value': 1}\n\n    def depth(node: dict) -> int:\n>       return 1 + depth(node[\"child\"])\n                         ^^^^^^^^^^^^^\nE       KeyError: 'child'\n\nexamples/shop.py:46: KeyError",
-      "duration": 0.00012599999990925426,
+      "duration": 8.029199943848653e-05,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "regression",
-        "hypothesis": "The depth function recurses into node[\"child\"] unconditionally instead of checking for a base case (missing \"child\" key), causing a KeyError when reaching a leaf node.",
+        "hypothesis": "depth() unconditionally recurses into node[\"child\"] without a base case for leaf nodes lacking a \"child\" key, causing a KeyError instead of terminating recursion.",
         "confidence": "high",
-        "suggested_fix": "Add a base case in shop.depth: return 1 if \"child\" not in node else 1 + depth(node[\"child\"])."
+        "suggested_fix": "Add a base case in shop.depth to check if \"child\" is not in node (or is None) and return 1 (or 0) instead of recursing further."
       }
     },
     {
@@ -341,15 +444,16 @@
       "outcome": "failed",
       "exc_type": "AssertionError",
       "exc_message": "3 soft-assert failure(s):\n- name was 'Leanne Graham'\n- username was 'Bret'\n- email was 'Sincere@april.biz'",
-      "traceback": "def test_profile_soft() -> None:\n        sa = SoftAssert()\n        user = shop.fetch_user(1)\n        sa.check(user[\"name\"] == \"Leanne Grahamm\", f\"name was {user['name']!r}\")\n        sa.check(user[\"username\"] == \"Brett\", f\"username was {user['username']!r}\")\n        sa.check(\"@wrong\" in user[\"email\"], f\"email was {user['email']!r}\")\n>       sa.assert_all()\n\nexamples/test_soft_assert.py:15: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <softcheck.SoftAssert object at 0x10c660ad0>\n\n    def assert_all(self) -> None:\n        if self._errors:\n            joined = \"\\n\".join(f\"- {e}\" for e in self._errors)\n>           raise AssertionError(\n                f\"{len(self._errors)} soft-assert failure(s):\\n{joined}\"\n            )\nE           AssertionError: 3 soft-assert failure(s):\nE           - name was 'Leanne Graham'\nE           - username was 'Bret'\nE           - email was 'Sincere@april.biz'\n\nexamples/softcheck.py:21: AssertionError",
-      "duration": 0.20041283299997303,
+      "traceback": "def test_profile_soft() -> None:\n        sa = SoftAssert()\n        user = shop.fetch_user(1)\n        sa.check(user[\"name\"] == \"Leanne Grahamm\", f\"name was {user['name']!r}\")\n        sa.check(user[\"username\"] == \"Brett\", f\"username was {user['username']!r}\")\n        sa.check(\"@wrong\" in user[\"email\"], f\"email was {user['email']!r}\")\n>       sa.assert_all()\n\nexamples/test_soft_assert.py:15: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <softcheck.SoftAssert object at 0x112284050>\n\n    def assert_all(self) -> None:\n        if self._errors:\n            joined = \"\\n\".join(f\"- {e}\" for e in self._errors)\n>           raise AssertionError(\n                f\"{len(self._errors)} soft-assert failure(s):\\n{joined}\"\n            )\nE           AssertionError: 3 soft-assert failure(s):\nE           - name was 'Leanne Graham'\nE           - username was 'Bret'\nE           - email was 'Sincere@april.biz'\n\nexamples/softcheck.py:21: AssertionError",
+      "duration": 0.22463929199966515,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test has hardcoded incorrect expected values ('Leanne Grahamm', 'Brett', '@wrong') that don't match the actual valid API data, indicating a typo/stale test rather than a code regression.",
+        "hypothesis": "The test itself has incorrect expected values (e.g., 'Leanne Grahamm', 'Brett', '@wrong') that don't match the actual valid data returned by fetch_user.",
         "confidence": "high",
-        "suggested_fix": "Fix the expected values in the test assertions to match actual API data: use 'Leanne Graham', 'Bret', and check email equals 'Sincere@april.biz' instead of the incorrect strings."
+        "suggested_fix": "Fix the assertions in test_profile_soft to match actual expected values: 'Leanne Graham', 'Bret', and check email equals 'Sincere@april.biz' instead of checking for '@wrong'."
       }
     },
     {
@@ -361,15 +465,16 @@
       "outcome": "failed",
       "exc_type": "AssertionError",
       "exc_message": "3 soft-assert failure(s):\n- name was 'Leanne Graham'\n- post_count returned 9, expected 10\n- 20% off 100 was -1900, expected 80",
-      "traceback": "def test_checkout_soft() -> None:\n        sa = SoftAssert()\n        user = shop.fetch_user(1)\n        sa.check(user[\"name\"] == \"Leanne Grahamm\", f\"name was {user['name']!r}\")\n        count = shop.post_count(1)\n        sa.check(count == 10, f\"post_count returned {count}, expected 10\")\n        price = shop.apply_discount(100, 20)\n        sa.check(price == 80, f\"20% off 100 was {price}, expected 80\")\n>       sa.assert_all()\n\nexamples/test_soft_assert.py:26: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <softcheck.SoftAssert object at 0x10c477c50>\n\n    def assert_all(self) -> None:\n        if self._errors:\n            joined = \"\\n\".join(f\"- {e}\" for e in self._errors)\n>           raise AssertionError(\n                f\"{len(self._errors)} soft-assert failure(s):\\n{joined}\"\n            )\nE           AssertionError: 3 soft-assert failure(s):\nE           - name was 'Leanne Graham'\nE           - post_count returned 9, expected 10\nE           - 20% off 100 was -1900, expected 80\n\nexamples/softcheck.py:21: AssertionError",
-      "duration": 0.38905391699972824,
+      "traceback": "def test_checkout_soft() -> None:\n        sa = SoftAssert()\n        user = shop.fetch_user(1)\n        sa.check(user[\"name\"] == \"Leanne Grahamm\", f\"name was {user['name']!r}\")\n        count = shop.post_count(1)\n        sa.check(count == 10, f\"post_count returned {count}, expected 10\")\n        price = shop.apply_discount(100, 20)\n        sa.check(price == 80, f\"20% off 100 was {price}, expected 80\")\n>       sa.assert_all()\n\nexamples/test_soft_assert.py:26: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <softcheck.SoftAssert object at 0x1121b7b10>\n\n    def assert_all(self) -> None:\n        if self._errors:\n            joined = \"\\n\".join(f\"- {e}\" for e in self._errors)\n>           raise AssertionError(\n                f\"{len(self._errors)} soft-assert failure(s):\\n{joined}\"\n            )\nE           AssertionError: 3 soft-assert failure(s):\nE           - name was 'Leanne Graham'\nE           - post_count returned 9, expected 10\nE           - 20% off 100 was -1900, expected 80\n\nexamples/softcheck.py:21: AssertionError",
+      "duration": 0.3955037919995448,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test itself has incorrect expectations/typos: it compares name to the misspelled 'Leanne Grahamm', expects post_count to be 10 when the API returns 9, and apply_discount(100,20) computing -1900 suggests a discount function bug unrelated to the test's intent, but the name and post_count checks are clearly wrong test assertions.",
+        "hypothesis": "Multiple assertions in the test have wrong expected values/logic (typo 'Leanne Grahamm', wrong expected post_count, and apply_discount likely called with wrong argument order causing -1900 instead of 80), indicating the test itself is incorrect rather than the underlying code.",
         "confidence": "high",
-        "suggested_fix": "Fix the test assertions: correct the expected name to 'Leanne Graham', update post_count expectation to match actual API value (9) or fix the fixture/mock, and verify apply_discount logic separately since -1900 indicates a possible off-by-order-of-operations bug in apply_discount that should be checked in isolation."
+        "suggested_fix": "Fix the test: correct the expected name to 'Leanne Graham', verify correct expected post_count value, and check the apply_discount function signature/argument order (price, discount_percent) to compute the correct expected discounted price."
       }
     },
     {
@@ -381,15 +486,16 @@
       "outcome": "failed",
       "exc_type": "AssertionError",
       "exc_message": "3 soft-assert failure(s):\n- 20% off 100 was -1900, expected 80\n- 10% off 50 was -450, expected 45\n- user 2 post_count was 9, expected 10",
-      "traceback": "def test_pricing_soft() -> None:\n        sa = SoftAssert()\n        d1 = shop.apply_discount(100, 20)\n        sa.check(d1 == 80, f\"20% off 100 was {d1}, expected 80\")\n        d2 = shop.apply_discount(50, 10)\n        sa.check(d2 == 45, f\"10% off 50 was {d2}, expected 45\")\n        count = shop.post_count(2)\n        sa.check(count == 10, f\"user 2 post_count was {count}, expected 10\")\n>       sa.assert_all()\n\nexamples/test_soft_assert.py:37: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <softcheck.SoftAssert object at 0x10c477890>\n\n    def assert_all(self) -> None:\n        if self._errors:\n            joined = \"\\n\".join(f\"- {e}\" for e in self._errors)\n>           raise AssertionError(\n                f\"{len(self._errors)} soft-assert failure(s):\\n{joined}\"\n            )\nE           AssertionError: 3 soft-assert failure(s):\nE           - 20% off 100 was -1900, expected 80\nE           - 10% off 50 was -450, expected 45\nE           - user 2 post_count was 9, expected 10\n\nexamples/softcheck.py:21: AssertionError",
-      "duration": 0.20216216700009682,
+      "traceback": "def test_pricing_soft() -> None:\n        sa = SoftAssert()\n        d1 = shop.apply_discount(100, 20)\n        sa.check(d1 == 80, f\"20% off 100 was {d1}, expected 80\")\n        d2 = shop.apply_discount(50, 10)\n        sa.check(d2 == 45, f\"10% off 50 was {d2}, expected 45\")\n        count = shop.post_count(2)\n        sa.check(count == 10, f\"user 2 post_count was {count}, expected 10\")\n>       sa.assert_all()\n\nexamples/test_soft_assert.py:37: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <softcheck.SoftAssert object at 0x1121b7890>\n\n    def assert_all(self) -> None:\n        if self._errors:\n            joined = \"\\n\".join(f\"- {e}\" for e in self._errors)\n>           raise AssertionError(\n                f\"{len(self._errors)} soft-assert failure(s):\\n{joined}\"\n            )\nE           AssertionError: 3 soft-assert failure(s):\nE           - 20% off 100 was -1900, expected 80\nE           - 10% off 50 was -450, expected 45\nE           - user 2 post_count was 9, expected 10\n\nexamples/softcheck.py:21: AssertionError",
+      "duration": 0.2019776669994826,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "regression",
-        "hypothesis": "apply_discount is computing the discount incorrectly (e.g., multiplying instead of subtracting a fraction, giving -1900 and -450 instead of 80 and 45), and post_count is off by one, indicating a bug in the shop module's implementation.",
+        "hypothesis": "shop.apply_discount is computing a wildly incorrect discount (e.g. treating percent as multiplier or adding instead of subtracting), and post_count is off by one, indicating a code defect rather than a bad test.",
         "confidence": "high",
-        "suggested_fix": "Fix shop.apply_discount to correctly compute price - (price * pct/100) instead of the current erroneous formula, and check shop.post_count logic for the off-by-one error."
+        "suggested_fix": "Review shop.apply_discount's formula (100 - 20% should be 80, not -1900) and fix the discount calculation logic; also check post_count's off-by-one counting logic."
       }
     },
     {
@@ -402,14 +508,15 @@
       "exc_type": "AssertionError",
       "exc_message": "assert 'Leanne Graham' == 'Leanne Grahamm'\n  \n  - Leanne Grahamm\n  ?              -\n  + Leanne Graham",
       "traceback": "def test_user_name() -> None:\n>       assert shop.fetch_user(1)[\"name\"] == \"Leanne Grahamm\"\nE       AssertionError: assert 'Leanne Graham' == 'Leanne Grahamm'\nE         \nE         - Leanne Grahamm\nE         ?              -\nE         + Leanne Graham\n\nexamples/test_wrong_expectations.py:12: AssertionError",
-      "duration": 0.19690437500048574,
+      "duration": 0.1994031249996624,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test asserts an incorrect expected name ('Leanne Grahamm' with a typo) instead of the actual correct value 'Leanne Graham'.",
+        "hypothesis": "The test expects the misspelled name 'Leanne Grahamm' while the API correctly returns 'Leanne Graham', indicating a typo in the test's expected value.",
         "confidence": "high",
-        "suggested_fix": "Fix the typo in the test assertion to expect 'Leanne Graham' instead of 'Leanne Grahamm'."
+        "suggested_fix": "Fix the assertion in test_user_name to expect 'Leanne Graham' instead of 'Leanne Grahamm'."
       }
     },
     {
@@ -422,14 +529,15 @@
       "exc_type": "AssertionError",
       "exc_message": "assert 'Sincere@april.biz' == 'leanne@wrong.example'\n  \n  - leanne@wrong.example\n  + Sincere@april.biz",
       "traceback": "def test_user_email() -> None:\n>       assert shop.fetch_user(1)[\"email\"] == \"leanne@wrong.example\"\nE       AssertionError: assert 'Sincere@april.biz' == 'leanne@wrong.example'\nE         \nE         - leanne@wrong.example\nE         + Sincere@april.biz\n\nexamples/test_wrong_expectations.py:16: AssertionError",
-      "duration": 0.20209895799962396,
+      "duration": 0.20082254199951421,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
         "hypothesis": "The test asserts an incorrect hardcoded expected email ('leanne@wrong.example') that doesn't match the actual valid data returned by the API ('Sincere@april.biz').",
         "confidence": "high",
-        "suggested_fix": "Update the expected value in the test to 'Sincere@april.biz' to match the actual user data."
+        "suggested_fix": "Update the assertion to expect 'Sincere@april.biz', the correct email for user 1."
       }
     },
     {
@@ -442,14 +550,15 @@
       "exc_type": "AssertionError",
       "exc_message": "assert (0.1 + 0.2) == 0.3",
       "traceback": "def test_float_sum() -> None:\n>       assert 0.1 + 0.2 == 0.3\nE       assert (0.1 + 0.2) == 0.3\n\nexamples/test_wrong_expectations.py:20: AssertionError",
-      "duration": 0.0002471249999871361,
+      "duration": 0.0001082500002667075,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test asserts exact equality on floating-point arithmetic, but 0.1 + 0.2 does not equal 0.3 exactly due to floating-point representation error.",
+        "hypothesis": "The test asserts exact equality of floating-point arithmetic (0.1 + 0.2 == 0.3), which fails due to standard floating-point representation error, not a code defect.",
         "confidence": "high",
-        "suggested_fix": "Use an approximate comparison, e.g. assert math.isclose(0.1 + 0.2, 0.3) or pytest.approx(0.3)."
+        "suggested_fix": "Use an approximate comparison, e.g. `assert 0.1 + 0.2 == pytest.approx(0.3)`."
       }
     },
     {
@@ -462,14 +571,15 @@
       "exc_type": "AssertionError",
       "exc_message": "assert False\n +  where False = isinstance(1, str)",
       "traceback": "def test_user_id_type() -> None:\n>       assert isinstance(shop.fetch_user(1)[\"id\"], str)\nE       assert False\nE        +  where False = isinstance(1, str)\n\nexamples/test_wrong_expectations.py:24: AssertionError",
-      "duration": 0.20540900000014517,
+      "duration": 0.2097885840003073,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test incorrectly asserts that the 'id' field should be a str, but the API returns an int, indicating a wrong expectation in the test itself.",
-        "confidence": "high",
-        "suggested_fix": "Update the assertion to expect an int (e.g., assert isinstance(shop.fetch_user(1)['id'], int)) or convert the id appropriately if str is truly required."
+        "hypothesis": "The test incorrectly asserts that user id should be a str, but fetch_user returns an int id, indicating the test's expectation is wrong rather than the code.",
+        "confidence": "medium",
+        "suggested_fix": "Update the test to assert isinstance(shop.fetch_user(1)[\\\"id\\\"], int) or otherwise align the expected type with the actual API contract."
       }
     },
     {
@@ -482,14 +592,15 @@
       "exc_type": "AssertionError",
       "exc_message": "assert '1-770-736-8031 x56442' == '555-1234'\n  \n  - 555-1234\n  + 1-770-736-8031 x56442",
       "traceback": "def test_user_phone() -> None:\n>       assert shop.fetch_user(1)[\"phone\"] == \"555-1234\"\nE       AssertionError: assert '1-770-736-8031 x56442' == '555-1234'\nE         \nE         - 555-1234\nE         + 1-770-736-8031 x56442\n\nexamples/test_wrong_expectations.py:28: AssertionError",
-      "duration": 0.20022537499971804,
+      "duration": 0.1938185839999278,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test asserts a hardcoded, unrealistic phone number \"555-1234\" that doesn't match the actual (likely faker-generated or real) data returned by fetch_user, indicating a stale or incorrect expectation in the test itself.",
+        "hypothesis": "The test asserts a hardcoded phone number '555-1234' that doesn't match the actual (likely randomly generated or fixture-based) phone value returned by shop.fetch_user(1).",
         "confidence": "high",
-        "suggested_fix": "Update the test assertion to match the actual expected phone number format/value returned by shop.fetch_user(1), or mock/fix the data source to return a deterministic value matching the test's expectation."
+        "suggested_fix": "Update the test assertion to match the actual expected phone value from the data source, or fix the fixture/mock data generating user 1's phone to return '555-1234' consistently."
       }
     },
     {
@@ -502,14 +613,15 @@
       "exc_type": "AssertionError",
       "exc_message": "assert '92998-3874' == '00000'\n  \n  - 00000\n  + 92998-3874",
       "traceback": "def test_user_zipcode() -> None:\n>       assert shop.fetch_user(1)[\"address\"][\"zipcode\"] == \"00000\"\nE       AssertionError: assert '92998-3874' == '00000'\nE         \nE         - 00000\nE         + 92998-3874\n\nexamples/test_wrong_expectations.py:32: AssertionError",
-      "duration": 0.20227375000013126,
+      "duration": 0.1990717909993691,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test asserts a hardcoded placeholder zipcode \"00000\" instead of the actual expected value \"92998-3874\" returned by the API/fixture.",
+        "hypothesis": "The test hardcodes an incorrect expected zipcode \"00000\" while the actual fetched user data legitimately has zipcode \"92998-3874\".",
         "confidence": "high",
-        "suggested_fix": "Update the assertion in test_user_zipcode to expect \"92998-3874\" (or the correct expected zipcode for user 1)."
+        "suggested_fix": "Update the assertion to expect the correct zipcode value \"92998-3874\" (or the appropriate dynamic/fixture value) instead of the stale hardcoded \"00000\"."
       }
     },
     {
@@ -520,16 +632,17 @@
       "phase": "call",
       "outcome": "failed",
       "exc_type": "AssertionError",
-      "exc_message": "assert 8 == 99\n +  where 8 = len({'id': 1, 'name': 'Leanne Graham', 'username': 'Bret', 'email': 'Sincere@april.biz', ...})\n +    where {'id': 1, 'name': 'Leanne Graham', 'username': 'Bret', 'email': 'Sincere@april.biz', ...} = <function fetch_user at 0x10c5e8e00>(1)\n +      where <function fetch_user at 0x10c5e8e00> = shop.fetch_user",
-      "traceback": "def test_user_field_count() -> None:\n>       assert len(shop.fetch_user(1)) == 99\nE       AssertionError: assert 8 == 99\nE        +  where 8 = len({'id': 1, 'name': 'Leanne Graham', 'username': 'Bret', 'email': 'Sincere@april.biz', ...})\nE        +    where {'id': 1, 'name': 'Leanne Graham', 'username': 'Bret', 'email': 'Sincere@april.biz', ...} = <function fetch_user at 0x10c5e8e00>(1)\nE        +      where <function fetch_user at 0x10c5e8e00> = shop.fetch_user\n\nexamples/test_wrong_expectations.py:36: AssertionError",
-      "duration": 0.20393074999992677,
+      "exc_message": "assert 8 == 99\n +  where 8 = len({'id': 1, 'name': 'Leanne Graham', 'username': 'Bret', 'email': 'Sincere@april.biz', ...})\n +    where {'id': 1, 'name': 'Leanne Graham', 'username': 'Bret', 'email': 'Sincere@april.biz', ...} = <function fetch_user at 0x1121f6e80>(1)\n +      where <function fetch_user at 0x1121f6e80> = shop.fetch_user",
+      "traceback": "def test_user_field_count() -> None:\n>       assert len(shop.fetch_user(1)) == 99\nE       AssertionError: assert 8 == 99\nE        +  where 8 = len({'id': 1, 'name': 'Leanne Graham', 'username': 'Bret', 'email': 'Sincere@april.biz', ...})\nE        +    where {'id': 1, 'name': 'Leanne Graham', 'username': 'Bret', 'email': 'Sincere@april.biz', ...} = <function fetch_user at 0x1121f6e80>(1)\nE        +      where <function fetch_user at 0x1121f6e80> = shop.fetch_user\n\nexamples/test_wrong_expectations.py:36: AssertionError",
+      "duration": 0.20630358300059015,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test asserts an arbitrary/incorrect expected field count (99) instead of the actual expected number of fields (8) returned by fetch_user.",
+        "hypothesis": "The test asserts an arbitrary and incorrect expected field count of 99 instead of the actual valid user field count of 8.",
         "confidence": "high",
-        "suggested_fix": "Update the assertion to the correct expected value, e.g. assert len(shop.fetch_user(1)) == 8, or use the actual expected schema field count."
+        "suggested_fix": "Update the assertion to match the actual expected number of fields returned by fetch_user, e.g. assert len(shop.fetch_user(1)) == 8."
       }
     },
     {
@@ -542,17 +655,18 @@
       "exc_type": "AssertionError",
       "exc_message": "assert False is True",
       "traceback": "def test_todo_completed() -> None:\n        resp = requests.get(f\"{BASE}/todos/1\", timeout=10)\n        resp.raise_for_status()\n>       assert resp.json()[\"completed\"] is True\nE       assert False is True\n\nexamples/test_wrong_expectations.py:42: AssertionError",
-      "duration": 0.19627504099935322,
+      "duration": 0.20321966700066696,
       "stdout_tail": "",
       "stderr_tail": "",
+      "log_tail": "",
       "verdict": {
         "category": "test_bug",
-        "hypothesis": "The test assumes todo item with id=1 has completed=True, but the actual data returned has completed=False, indicating a stale or incorrect hardcoded expectation in the test rather than an API/code defect.",
+        "hypothesis": "The test asserts todo id 1 is completed, but the API returns actual data where 'completed' is False, indicating the test's hardcoded expectation is stale or incorrect.",
         "confidence": "medium",
-        "suggested_fix": "Update the test to either fetch the expected value dynamically, use a known fixture/test data with completed=True, or correct the assertion to match the actual expected state of todo id=1."
+        "suggested_fix": "Update the assertion to match the actual expected state of todo 1, or use a fixture/setup that creates a todo with a known completed status before asserting."
       }
     }
   ],
-  "total_failures": 26,
-  "total_verdicts": 26
+  "total_failures": 30,
+  "total_verdicts": 30
 }
