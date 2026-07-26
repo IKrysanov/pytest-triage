@@ -46,6 +46,7 @@ class FailureContext:
     duration: float = 0.0
     stdout_tail: str = ""
     stderr_tail: str = ""
+    log_tail: str = ""
 
 
 def build_context(
@@ -59,6 +60,9 @@ def build_context(
     traceback = _truncate_tail(report.longreprtext, _MAX_TRACEBACK_BYTES)
     stdout_tail = _truncate_tail(report.capstdout, _MAX_OUTPUT_TAIL_BYTES)
     stderr_tail = _truncate_tail(report.capstderr, _MAX_OUTPUT_TAIL_BYTES)
+    # `logging`-module output lands in a separate section from stdout/stderr;
+    # capture it too so triage sees server/app logs emitted via a logger.
+    log_tail = _truncate_tail(report.caplog, _MAX_OUTPUT_TAIL_BYTES)
     message = (
         _truncate_head(exc_message, _MAX_MESSAGE_BYTES) if exc_message else exc_message
     )
@@ -66,6 +70,7 @@ def build_context(
         traceback = redact(traceback)
         stdout_tail = redact(stdout_tail)
         stderr_tail = redact(stderr_tail)
+        log_tail = redact(log_tail)
         if message:
             message = redact(message)
     return FailureContext(
@@ -78,6 +83,7 @@ def build_context(
         duration=report.duration,
         stdout_tail=stdout_tail,
         stderr_tail=stderr_tail,
+        log_tail=log_tail,
     )
 
 

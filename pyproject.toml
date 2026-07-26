@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytest-triage"
-version = "0.1.1"
+version = "0.1.2"
 description = "Structured failure triage for pytest, with optional LLM verdicts."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,6 +35,7 @@ dev = [
 ]
 anthropic = ["anthropic>=0.40"]
 gigachat = ["gigachat>=0.2.1"]
+openai = ["openai>=1.0"]
 
 [project.urls]
 Homepage = "https://github.com/IKrysanov/pytest-triage"
@@ -49,6 +50,7 @@ fake = "pytest_triage.providers.fake:FakeTriageClient"
 oauth-fake = "pytest_triage.providers.fake:OAuthFakeClient"
 anthropic = "pytest_triage.providers.anthropic:AnthropicClient"
 gigachat = "pytest_triage.providers.gigachat:GigaChatClient"
+openai = "pytest_triage.providers.openai:OpenAIClient"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pytest_triage"]
@@ -82,7 +84,7 @@ files = ["src", "tests", "conftest.py"]
 # The provider SDKs are optional extras, not installed in CI; treat them as
 # untyped rather than failing the type check when they are absent.
 [[tool.mypy.overrides]]
-module = ["anthropic", "anthropic.*", "gigachat", "gigachat.*"]
+module = ["anthropic", "anthropic.*", "gigachat", "gigachat.*", "openai", "openai.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -91,8 +91,70 @@ _ASSIGNMENT = re.compile(
 )
 # AWS access key id.
 _AWS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
-# Long base64/hex-ish runs are far more likely a key/token than prose.
-_BASE64 = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])")
+
+# --- Vendor-prefixed API tokens. Each carries an unambiguous prefix, so a
+# dedicated rule redacts the whole token (prefix included) and catches shapes
+# the generic base64 rule fragments on ('-' / '_') or skips when short. Every
+# pattern is a literal prefix plus a single character class: strictly linear. ---
+_PREFIXED_TOKENS = (
+    # OpenAI / Anthropic keys: sk-, sk-proj-..., sk-ant-... (this plugin's own
+    # providers — the most likely key to end up in a client's traceback).
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),
+    # GitHub personal / OAuth / app / refresh tokens, and fine-grained PATs.
+    re.compile(r"\bgh[opsur]_[A-Za-z0-9]{20,}"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}"),
+    # GitLab personal access token.
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),
+    # Slack bot / user / app / refresh tokens.
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
+    # Stripe secret / restricted keys.
+    re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"),
+    # Google API key.
+    re.compile(r"\bAIza[A-Za-z0-9_-]{35}"),
+    # Google OAuth: client secret (GOCSPX-) and ya29. access tokens.
+    re.compile(r"\bGOCSPX-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"\bya29\.[A-Za-z0-9_-]{20,}"),
+    # Telegram bot token: <bot-id>:AA<secret>. The `AA` marker keeps a bare
+    # `digits:text` from matching.
+    re.compile(r"\b\d{6,}:AA[A-Za-z0-9_-]{30,}"),
+    # SendGrid API key: SG.<id>.<secret>. Each segment is its own char class,
+    # separated by a literal dot, so there is no backtracking across segments.
+    re.compile(r"\bSG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{30,}"),
+    # npm access token.
+    re.compile(r"\bnpm_[A-Za-z0-9]{36}"),
+    # --- CI / VCS / package registries. ---
+    # PyPI upload token.
+    re.compile(r"\bpypi-[A-Za-z0-9_-]{40,}"),
+    # Hugging Face access token.
+    re.compile(r"\bhf_[A-Za-z0-9]{20,}"),
+    # Docker Hub personal access token.
+    re.compile(r"\bdckr_pat_[A-Za-z0-9_-]{20,}"),
+    # --- Cloud providers. (GCP service-account keys are PEM, already covered.) ---
+    # DigitalOcean personal / OAuth / refresh tokens.
+    re.compile(r"\bdo[opr]_v1_[a-f0-9]{64}"),
+    # Databricks personal access token.
+    re.compile(r"\bdapi[0-9a-f]{32,}"),
+    # --- Messengers / payments. ---
+    # Discord bot token: <id>.<timestamp>.<hmac>, three dot-separated segments,
+    # each its own char class so there is no cross-segment backtracking.
+    re.compile(r"\b[MNO][A-Za-z0-9_-]{23}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}"),
+    # Twilio Account / API key SID.
+    re.compile(r"\b(?:AC|SK)[0-9a-f]{32}\b"),
+    # Square access token / OAuth secret.
+    re.compile(r"\bsq0(?:atp|csp)-[A-Za-z0-9_-]{20,}"),
+    # Braintree / PayPal access token.
+    re.compile(r"\baccess_token\$(?:production|sandbox)\$[0-9a-z]{16,}"),
+    # Mailgun API key.
+    re.compile(r"\bkey-[0-9a-f]{32}\b"),
+)
+
+# Long base64/hex-ish runs are far more likely a key/token than prose. `/` is
+# deliberately excluded from the run: a filesystem path in a traceback
+# ("/app/services/checkout") is otherwise one long [A-Za-z0-9/] run and gets
+# swallowed whole, destroying the triage signal. A standard-base64 blob that
+# happens to contain `/` is still caught in its `/`-delimited parts, and real
+# credentials are covered by the env, vendor, JWT, URL and assignment rules.
+_BASE64 = re.compile(r"(?<![A-Za-z0-9+])[A-Za-z0-9+]{20,}={0,2}(?![A-Za-z0-9+=])")
 
 
 def redact(text: str) -> str:
@@ -107,6 +169,8 @@ def redact(text: str) -> str:
     text = _BEARER.sub(r"\g<1>" + _REDACTED, text)
     text = _ASSIGNMENT.sub(r"\g<1>" + _REDACTED, text)
     text = _AWS_KEY.sub(_REDACTED, text)
+    for pattern in _PREFIXED_TOKENS:
+        text = pattern.sub(_REDACTED, text)
     text = _BASE64.sub(_REDACTED, text)
     return text
 
@@ -118,7 +182,11 @@ def _redact_env_values(text: str) -> str:
         min_len = 4 if _SECRET_ENV_NAME.search(key) else _ENV_MIN_LEN
         if len(value) < min_len or value not in text:
             continue
-        text = text.replace(value, _REDACTED)
+        # Replace only whole-token occurrences. A short placeholder value
+        # (TOKEN=test) must not gut every "test" inside "test_login"/"pytest";
+        # a substring replace would mangle the traceback it is meant to clarify.
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(value)}(?![A-Za-z0-9_])"
+        text = re.sub(pattern, _REDACTED, text)
     return text
 
 

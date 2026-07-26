@@ -105,6 +105,7 @@ def _failure_to_dict(
         "duration": failure.duration,
         "stdout_tail": failure.stdout_tail,
         "stderr_tail": failure.stderr_tail,
+        "log_tail": failure.log_tail,
         "verdict": _verdict_to_dict(verdict),
     }
 

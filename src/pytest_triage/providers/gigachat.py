@@ -29,6 +29,7 @@ is dependency injection for tests and for callers that build their own config.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from typing import TYPE_CHECKING, Any
@@ -60,8 +61,9 @@ _FUNCTION_NAME = "record_verdict"
 
 _SYSTEM = """\
 Ты — ассистент по разбору упавших тестов pytest. Тебе дают контекст одного
-упавшего теста. Определи одну наиболее вероятную причину падения и вызови
-функцию `record_verdict` ровно один раз. Не отвечай обычным текстом.
+упавшего теста: исключение, трейсбек и захваченные stdout, stderr и логи.
+Определи одну наиболее вероятную причину падения и вызови функцию
+`record_verdict` ровно один раз. Не отвечай обычным текстом.
 
 Категории (выбери ровно одну, значение пиши латиницей, как в списке):
   - regression: изменился код под тестом и теперь работает неверно
@@ -70,6 +72,11 @@ _SYSTEM = """\
                 неверная конфигурация
   - test_bug:   ошибка в самом тесте — неверный assert или устаревшая фикстура
   - unknown:    данных недостаточно, чтобы решить
+
+Захваченные логи и вывод часто прямо называют причину — например, HTTP 5xx или
+ошибка соединения указывают на env. Взвешивай поведение кода и ожидание теста
+вместе; если они противоречат и по контексту нельзя понять, что именно неверно,
+выбирай unknown, а не догадку.
 
 Уверенность confidence: low, medium или high (тоже латиницей).
 
@@ -169,6 +176,7 @@ class GigaChatClient(BaseTriageClient):
                 ("трейсбек:\n", ctx.traceback),
                 ("хвост stdout:\n", ctx.stdout_tail),
                 ("хвост stderr:\n", ctx.stderr_tail),
+                ("хвост логов:\n", ctx.log_tail),
             ]
         )
 
@@ -189,7 +197,10 @@ class GigaChatClient(BaseTriageClient):
         return _extract_verdict_json(completion)
 
     def close(self) -> None:
-        self._client.close()
+        # Self-protecting and idempotent (the conformance kit calls it twice): a
+        # second close, or an SDK that raises on teardown, must never surface.
+        with contextlib.suppress(Exception):
+            self._client.close()
 
 
 def _extract_verdict_json(completion: Any) -> str:
@@ -206,6 +217,9 @@ def _extract_verdict_json(completion: Any) -> str:
     call = getattr(message, "function_call", None)
     arguments = getattr(call, "arguments", None)
     if arguments:
+        # The SDK hands back a parsed object; tolerate a raw JSON string too.
+        if isinstance(arguments, str):
+            return arguments
         return json.dumps(arguments, ensure_ascii=False)
     return str(getattr(message, "content", "") or "")
 

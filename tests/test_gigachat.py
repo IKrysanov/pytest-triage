@@ -106,6 +106,20 @@ def test_returns_verdict_from_function_call(monkeypatch: pytest.MonkeyPatch) -> 
     assert calls["payload"]["function_call"] == {"name": "record_verdict"}
 
 
+def test_string_function_arguments_are_handled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Robustness: tolerate a deployment that returns arguments as a raw JSON
+    # string instead of a parsed object.
+    call = types.SimpleNamespace(
+        name="record_verdict",
+        arguments='{"category": "env", "confidence": "low", '
+        '"hypothesis": "сервис недоступен", "suggested_fix": null}',
+    )
+    _install_fake_gigachat(monkeypatch, _completion(function_call=call))
+    assert GigaChatClient().analyze(_ctx()).category == "env"
+
+
 def test_verdict_text_is_russian_and_categories_stay_english(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -144,10 +158,19 @@ def test_prompt_is_russian_and_carries_the_context(
 def test_prompt_omits_empty_sections(monkeypatch: pytest.MonkeyPatch) -> None:
     # Every byte of an empty "хвост stdout:" section is billed on every call.
     calls = _install_fake_gigachat(monkeypatch, _completion())
-    GigaChatClient().analyze(_ctx(stdout_tail="", stderr_tail=""))
+    GigaChatClient().analyze(_ctx(stdout_tail="", stderr_tail="", log_tail=""))
     user = calls["payload"]["messages"][1]["content"]
     assert "stdout" not in user
     assert "stderr" not in user
+    assert "логов" not in user
+
+
+def test_prompt_carries_the_log_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Logs captured via the `logging` module must reach the model, labelled.
+    calls = _install_fake_gigachat(monkeypatch, _completion())
+    GigaChatClient().analyze(_ctx(log_tail="ERROR srv: DB_UNREACHABLE"))
+    user = calls["payload"]["messages"][1]["content"]
+    assert "хвост логов:\nERROR srv: DB_UNREACHABLE" in user
 
 
 def test_prompt_scrubs_secrets_from_a_parametrized_nodeid(
@@ -356,6 +379,21 @@ def test_close_closes_client(monkeypatch: pytest.MonkeyPatch) -> None:
     client = GigaChatClient()
     client.close()
     assert calls["closed"] is True
+
+
+def test_close_swallows_a_raising_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An SDK that raises on teardown (already-closed session, dead socket) must
+    # not turn a clean run into an error. close is fenced here, not just by the
+    # caller.
+    _install_fake_gigachat(monkeypatch, _completion())
+    client = GigaChatClient()
+
+    def _boom() -> None:
+        raise RuntimeError("session already closed")
+
+    client._client.close = _boom
+    client.close()  # no raise
+    client.close()  # idempotent
 
 
 def test_conforms(monkeypatch: pytest.MonkeyPatch) -> None:

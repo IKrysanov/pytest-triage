@@ -110,6 +110,15 @@ def test_non_positive_timeout_is_rejected(pytester: pytest.Pytester) -> None:
     result.stderr.fnmatch_lines(["*ai_timeout must be > 0*"])
 
 
+@pytest.mark.parametrize("bad", ["inf", "nan"])
+def test_non_finite_timeout_is_rejected(pytester: pytest.Pytester, bad: str) -> None:
+    # An infinite timeout would defeat the wall-clock cap entirely; nan slips
+    # past a naive `<= 0` check. Both must be a clear configuration error.
+    pytester.makepyfile(_ONE_FAILURE)
+    result = pytester.runpytest_inprocess(str(pytester.path), f"--ai-timeout={bad}")
+    result.stderr.fnmatch_lines(["*ai_timeout must be a finite number*"])
+
+
 def test_warns_when_triage_on_without_provider(pytester: pytest.Pytester) -> None:
     pytester.makepyfile(_ONE_FAILURE)
     _, result = run_triage(pytester, "--ai-triage=on")

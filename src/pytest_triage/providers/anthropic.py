@@ -21,12 +21,14 @@ absent — the clear error is raised only when a client is actually constructed.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from pytest_triage.providers._prompt import SYSTEM_PROMPT
 from pytest_triage.providers.base import (
     BaseTriageClient,
     redact_nodeid,
@@ -42,23 +44,6 @@ _MAX_TOKENS = 1024
 # Fail fast: the plugin's budget/timeout layer owns resilience, so SDK retries
 # only fight the wall-clock cap and leave abandoned threads hitting the API.
 _MAX_RETRIES = 0
-
-_SYSTEM = """\
-You are a test-failure triage assistant. You are given the context of a single
-failed pytest test. Decide the single most likely cause, then call the
-`record_verdict` tool exactly once. Never reply in prose.
-
-Categories (choose one):
-  - regression: the code under test changed and now misbehaves
-  - flaky:      nondeterministic — timing, ordering, or external state
-  - env:        environment or infrastructure — network, database, a missing
-                service, or bad configuration
-  - test_bug:   the test itself is wrong — bad assertion or stale fixture
-  - unknown:    the evidence is insufficient to decide
-
-Keep the hypothesis to one sentence. Suggest a concrete fix when one is clear,
-otherwise leave it null. Judge only from the provided context.
-"""
 
 # Strict tool use makes the model return a structured verdict directly; the
 # schema mirrors Verdict. The tolerant BaseTriageClient parser still guards
@@ -118,6 +103,7 @@ class AnthropicClient(BaseTriageClient):
                 ("traceback:\n", ctx.traceback),
                 ("stdout tail:\n", ctx.stdout_tail),
                 ("stderr tail:\n", ctx.stderr_tail),
+                ("log tail:\n", ctx.log_tail),
             ]
         )
 
@@ -125,7 +111,7 @@ class AnthropicClient(BaseTriageClient):
         message = self._client.messages.create(
             model=self._model,
             max_tokens=_MAX_TOKENS,
-            system=_SYSTEM,
+            system=SYSTEM_PROMPT,
             tools=[_VERDICT_TOOL],
             tool_choice={"type": "tool", "name": "record_verdict"},
             messages=[{"role": "user", "content": prompt}],
@@ -136,7 +122,10 @@ class AnthropicClient(BaseTriageClient):
         return ""  # no tool_use block -> parser yields category="unknown"
 
     def close(self) -> None:
-        self._client.close()
+        # Self-protecting and idempotent (the conformance kit calls it twice): a
+        # second close, or an SDK that raises on teardown, must never surface.
+        with contextlib.suppress(Exception):
+            self._client.close()
 
 
 def _missing_dependency_error() -> Exception:

@@ -12,7 +12,7 @@ they hit the network, and they are meant to be run by hand.
 ## See the output without running anything
 
 Two real reports from this suite are committed so you can read what triage
-produces before setting up any key — the same 26 failures through two providers,
+produces before setting up any key — the same 30 failures through two providers,
 diff them to compare:
 
 - [`sample-triage-anthropic.json`](sample-triage-anthropic.json) — `claude-sonnet-5`
@@ -53,6 +53,7 @@ verdict, or diff the two provider reports.
 | `test_wrong_expectations.py` | `test_bug` | The API/code is correct; the test asserts a wrong value, type, or count. |
 | `test_environment.py` | `env` | Unreachable hosts (DNS) and **real** upstream failures — `httpbin.org` `500` / `503` and a request that times out. |
 | `test_soft_assert.py` | mixed | A soft-assert collector raises several joined failures. `test_pricing_soft` is all product bugs (`regression`); `test_profile_soft` is all wrong expectations (`test_bug`); `test_checkout_soft` mixes both — a good stress of the flat single-verdict. |
+| `test_diagnostics.py` | mixed | Each test emits diagnostic output on **stdout, stderr, and the logger**, so the report's `stdout_tail` / `stderr_tail` / `log_tail` are populated. The bare assertion is ambiguous; the captured output names the cause (e.g. an `HTTP 503` in `log_tail` → `env`), showing how much sharper the verdict is with output than without. |
 
 `regression` vs `test_bug` is genuinely ambiguous for some pure-logic cases
 (passing bad input to a function): a good model will lean one way or honestly

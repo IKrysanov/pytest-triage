@@ -63,3 +63,23 @@ def test_captures_message_and_output(pytester: pytest.Pytester) -> None:
     assert ctx.exc_type == "ValueError"
     assert ctx.exc_message == "explicit message"
     assert "MARKER_OUT" in ctx.stdout_tail
+
+
+def test_captures_logging_output(pytester: pytest.Pytester) -> None:
+    # Logs emitted through the `logging` module land in pytest's caplog section,
+    # separate from stdout/stderr; triage must still see them.
+    pytester.makepyfile(
+        """
+        import logging
+
+        def test_boom():
+            logging.getLogger("srv").error("DB_UNREACHABLE marker")
+            assert False
+        """
+    )
+    spy, _ = run_triage(pytester, "--ai-redact=off")
+
+    assert len(spy.failures) == 1
+    ctx = spy.failures[0]
+    assert "DB_UNREACHABLE marker" in ctx.log_tail
+    assert "DB_UNREACHABLE marker" not in ctx.stdout_tail

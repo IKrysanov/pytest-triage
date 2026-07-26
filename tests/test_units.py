@@ -81,6 +81,7 @@ def _make_report(longrepr: str) -> pytest.TestReport:
         sections=[
             ("Captured stdout call", "OUT-LINE\n"),
             ("Captured stderr call", "ERR-LINE\n"),
+            ("Captured log call", "LOG-LINE\n"),
         ],
         duration=0.25,
     )
@@ -102,6 +103,7 @@ def test_build_context_maps_fields_without_redaction() -> None:
     assert "AssertionError" in ctx.traceback
     assert ctx.stdout_tail == "OUT-LINE\n"
     assert ctx.stderr_tail == "ERR-LINE\n"
+    assert ctx.log_tail == "LOG-LINE\n"
     assert ctx.duration == 0.25
 
 

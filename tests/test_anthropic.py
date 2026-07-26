@@ -145,6 +145,21 @@ def test_close_closes_client(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls["closed"] is True
 
 
+def test_close_swallows_a_raising_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An SDK that raises on teardown (already-closed session, dead socket) must
+    # not turn a clean run into an error. close is fenced here, not just by the
+    # caller.
+    _install_fake_anthropic(monkeypatch, [])
+    client = AnthropicClient()
+
+    def _boom() -> None:
+        raise RuntimeError("client already closed")
+
+    client._client.close = _boom
+    client.close()  # no raise
+    client.close()  # idempotent
+
+
 def test_model_defaults_and_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_anthropic(monkeypatch, [])
     monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
