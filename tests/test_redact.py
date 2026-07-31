@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import time
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -143,7 +144,8 @@ def test_opaque_secret_inside_an_exempt_url_is_still_redacted(
     monkeypatch.setenv("SLACK_NOTIFY_URL", url)
     text = redact(f"POST failed: {url}")
     assert secret not in text
-    assert "hooks.slack.com" in text  # the host is signal and survives
+    sanitized_url = text.removeprefix("POST failed: ")
+    assert urlsplit(sanitized_url).hostname == "hooks.slack.com"
 
 
 def test_compound_secret_assignment_redacted() -> None:

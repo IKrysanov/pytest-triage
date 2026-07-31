@@ -194,7 +194,13 @@ def test_provider_exception_with_a_broken_str_is_contained() -> None:
     assert "_Unprintable" in verdict.hypothesis  # the type still names the cause
 
 
-def test_a_provider_error_handler_that_itself_dies_still_yields_a_verdict() -> None:
+@pytest.mark.parametrize(
+    "formatting_failure",
+    [ValueError("no name"), SystemExit(3), KeyboardInterrupt(), GeneratorExit()],
+)
+def test_a_dying_provider_error_handler_still_yields_a_verdict(
+    formatting_failure: BaseException,
+) -> None:
     # The last hole in the containment guarantee: the detail is built from
     # `type(exc).__name__`, so an exception whose *type* refuses to be named
     # kills the handler that exists to catch it, leaving nothing to return.
@@ -204,7 +210,7 @@ def test_a_provider_error_handler_that_itself_dies_still_yields_a_verdict() -> N
         # input, so the error is silenced rather than designed away.
         @property
         def __name__(cls) -> str:  # type: ignore[override]
-            raise ValueError("no name")
+            raise formatting_failure
 
     class _Nameless(Exception, metaclass=_NamelessMeta):
         pass
@@ -266,14 +272,19 @@ def test_a_dying_error_handler_never_reaches_the_users_run(
     assert "INTERNALERROR" not in result.stdout.str()
 
 
-def test_base_exception_in_a_provider_becomes_a_provider_error() -> None:
-    # SystemExit/KeyboardInterrupt are not Exception. Left uncaught in the worker
+@pytest.mark.parametrize(
+    "raised", [SystemExit(3), KeyboardInterrupt(), GeneratorExit()]
+)
+def test_process_control_exception_becomes_a_provider_error(
+    raised: BaseException,
+) -> None:
+    # Process-control exceptions are not Exception. Left uncaught in the worker
     # thread they leave `result` empty, and the resulting IndexError escapes past
     # the circuit breaker — which then never trips, so every remaining failure
     # burns another call of the budget on a provider that cannot answer.
     class _Exits:
         def analyze(self, ctx: FailureContext) -> Verdict:
-            raise SystemExit(3)
+            raise raised
 
         def close(self) -> None:
             pass

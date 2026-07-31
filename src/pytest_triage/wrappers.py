@@ -79,7 +79,7 @@ def _safe_provider_error(exc: BaseException) -> Verdict:
     """
     try:
         return _provider_error(exc)
-    except BaseException:
+    except (Exception, GeneratorExit, KeyboardInterrupt, SystemExit):
         return _unknown(f"{_PROVIDER_ERROR}: the provider raised, unprintably")
 
 
@@ -116,11 +116,11 @@ class TimedOutClient:
             verdict: Verdict
             try:
                 verdict = self._inner.analyze(ctx)
-            except BaseException as exc:  # invariant 1: never propagate; surface it
-                # BaseException, not Exception: a provider that raises SystemExit
-                # or KeyboardInterrupt would otherwise leave `result` empty and
-                # `result[0]` would escape past the circuit breaker — which then
-                # never trips, so every remaining call burns budget.
+            except (Exception, GeneratorExit, KeyboardInterrupt, SystemExit) as exc:
+                # Process-control exceptions are outside Exception. Enumerating
+                # the standard hierarchy keeps the worker total without a broad
+                # BaseException catch: otherwise `result` stays empty and the
+                # resulting IndexError escapes past the circuit breaker.
                 verdict = _safe_provider_error(exc)
             result.append(verdict)
 
