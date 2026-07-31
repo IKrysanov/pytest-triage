@@ -54,6 +54,120 @@ def test_pathlike_env_value_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "/opt/data/models" in redact("loading /opt/data/models now")
 
 
+def test_url_env_value_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A dev contour sets GIGACHAT_BASE_URL/GIGACHAT_AUTH_URL; both are endpoints,
+    # not secrets. Scrubbing them turned "Max retries exceeded with url: ..." —
+    # the one line that explains an env failure — into "[REDACTED]".
+    monkeypatch.setenv("GIGACHAT_BASE_URL", "https://gigachat.dev.internal/api/v1")
+    monkeypatch.setenv(
+        "GIGACHAT_AUTH_URL", "https://ngw.dev.internal:9443/api/v2/oauth"
+    )
+    text = redact(
+        "ConnectError: Max retries exceeded with url: "
+        "https://gigachat.dev.internal/api/v1 (auth via "
+        "https://ngw.dev.internal:9443/api/v2/oauth)"
+    )
+    assert "https://gigachat.dev.internal/api/v1" in text
+    assert "https://ngw.dev.internal:9443/api/v2/oauth" in text
+
+
+def test_signed_url_env_value_is_not_exempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A query string turns a URL from an endpoint into a capability: the
+    # signature *is* the credential. Only bare endpoints earn the exemption.
+    monkeypatch.setenv("SIGNED_URL", "https://files.example/download?sig=z-7.f")
+    assert "z-7.f" not in redact("GET https://files.example/download?sig=z-7.f failed")
+
+
+def test_fragment_url_env_value_is_not_exempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TOKEN_URL", "https://sso.example/cb#access_token=a-1.b")
+    assert "a-1.b" not in redact(
+        "redirect to https://sso.example/cb#access_token=a-1.b"
+    )
+
+
+def test_secret_named_url_env_value_is_not_exempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The shape of a capability URL is the shape of an endpoint URL — only the
+    # name tells them apart. A variable that calls itself a secret is taken at
+    # its word, even when the value is a bare URL.
+    for name in (
+        "API_SECRET_URL",
+        "DOWNLOAD_TOKEN_URL",
+        "SLACK_WEBHOOK_URL",
+        "SESSION_URL",
+    ):
+        monkeypatch.setenv(name, "https://files.example/d/z-7.f")
+        assert "z-7.f" not in redact("GET https://files.example/d/z-7.f failed"), name
+        monkeypatch.delenv(name)
+
+
+def test_auth_url_keeps_the_endpoint_exemption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `auth` must stay out of the secret-name markers: an OAuth *endpoint* is an
+    # address like any other, and it is half of what the exemption exists for.
+    monkeypatch.setenv("GIGACHAT_AUTH_URL", "https://ngw.dev.internal:9443/oauth")
+    assert "ngw.dev.internal" in redact("POST https://ngw.dev.internal:9443/oauth 503")
+
+
+def test_control_characters_do_not_defeat_redaction() -> None:
+    # A NUL is not `\s`, so `token\x00=hunter2` matched no assignment rule — and
+    # a later strip of control characters turned it back into a readable
+    # `token=hunter2`. Redaction must see the text as it will finally be read.
+    assert "hunter2" not in redact("token\x00=hunter2")
+    assert "hunter2" not in redact("pass\x08word=hunter2")
+    assert "hunter2" not in redact("Authorization:\x1bBearer hunter2")
+
+
+def test_url_env_value_with_inline_credentials_is_not_exempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The exemption covers endpoints, not connection strings that carry a secret.
+    monkeypatch.setenv("DATABASE_URL", "postgres://admin:sup3rS3cret@db:5432/app")
+    assert "sup3rS3cret" not in redact(
+        "connecting to postgres://admin:sup3rS3cret@db:5432/app"
+    )
+
+
+def test_opaque_secret_inside_an_exempt_url_is_still_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Defence in depth for a name that raises no suspicion at all: the exemption
+    # only skips the whole-value env rule, and every other rule still runs, so a
+    # long opaque path segment is caught by the base64 rule anyway. (Under a
+    # name like SLACK_WEBHOOK_URL the value never reaches this point — the
+    # secret-name check redacts it whole.)
+    secret = "XCq3sVn8kL2mPz9wR4tYuI7o"
+    url = f"https://hooks.slack.com/services/T00000000/B00000000/{secret}"
+    monkeypatch.setenv("SLACK_NOTIFY_URL", url)
+    text = redact(f"POST failed: {url}")
+    assert secret not in text
+    assert "hooks.slack.com" in text  # the host is signal and survives
+
+
+def test_compound_secret_assignment_redacted() -> None:
+    # An underscore is a word character, so a `\b` prefix never matched the
+    # compound names real settings use. These arrive via a settings repr or a
+    # ValidationError in a traceback, and a short value misses the base64 rule
+    # too, so nothing else would have caught them.
+    for shape in (
+        "key_file_password='Sup3rKeyPassphrase'",
+        "db_password=hunter2",
+        "refresh_token: abc123XYZ",
+        "my_api_key=shortval",
+    ):
+        assert "[REDACTED]" in redact(f"ValidationError: {shape}"), shape
+    assert "Sup3rKeyPassphrase" not in redact("key_file_password='Sup3rKeyPassphrase'")
+
+
+def test_a_letter_before_the_keyword_still_blocks_the_match() -> None:
+    # The guard only relaxes the underscore/hyphen case; an alphanumeric prefix
+    # must not start matching, or "oauth=" would redact an ordinary value.
+    assert redact("oauth=flow-name") == "oauth=flow-name"
+    assert redact("nopwd=plain") == "nopwd=plain"
+
+
 def test_empty_text_is_noop() -> None:
     assert redact("") == ""
 

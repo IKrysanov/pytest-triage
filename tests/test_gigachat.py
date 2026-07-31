@@ -21,6 +21,7 @@ a fake `gigachat` module into `sys.modules` — the client imports it lazily.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import types
 from typing import Any, cast
@@ -341,13 +342,57 @@ def test_explicit_transport_options_are_passed_through(
     GigaChatClient(
         credentials="c",
         scope="GIGACHAT_API_CORP",
+        base_url="https://gigachat.dev.internal/api/v1",
+        auth_url="https://ngw.dev.internal:9443/api/v2/oauth",
         verify_ssl_certs=True,
         ca_bundle_file="/etc/ssl/certs/ca-bundle.crt",
         timeout=12.0,
     )
     assert calls["init_kwargs"]["scope"] == "GIGACHAT_API_CORP"
+    assert calls["init_kwargs"]["base_url"] == "https://gigachat.dev.internal/api/v1"
+    assert (
+        calls["init_kwargs"]["auth_url"] == "https://ngw.dev.internal:9443/api/v2/oauth"
+    )
     assert calls["init_kwargs"]["verify_ssl_certs"] is True
     assert calls["init_kwargs"]["timeout"] == 12.0
+
+
+def test_mutual_tls_options_are_passed_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A corporate contour (GIGACHAT_API_CORP/B2B) can require a client
+    # certificate. Trusting the server was already expressible via
+    # ca_bundle_file; presenting our own certificate is the other half.
+    calls = _install_fake_gigachat(monkeypatch, _completion())
+    GigaChatClient(
+        cert_file="/etc/ssl/certs/client.crt",
+        key_file="/etc/ssl/private/client.key",
+        key_file_password="passphrase",
+    )
+    assert calls["init_kwargs"]["cert_file"] == "/etc/ssl/certs/client.crt"
+    assert calls["init_kwargs"]["key_file"] == "/etc/ssl/private/client.key"
+    assert calls["init_kwargs"]["key_file_password"] == "passphrase"
+
+
+def test_mutual_tls_is_left_to_the_sdk_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Unset means unset: passing cert_file=None would override GIGACHAT_CERT_FILE.
+    calls = _install_fake_gigachat(monkeypatch, _completion())
+    GigaChatClient()
+    assert "cert_file" not in calls["init_kwargs"]
+    assert "key_file" not in calls["init_kwargs"]
+    assert "key_file_password" not in calls["init_kwargs"]
+
+
+def test_endpoints_are_left_to_the_sdk_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A dev contour overrides the endpoints through the SDK's own
+    # GIGACHAT_BASE_URL / GIGACHAT_AUTH_URL; the plugin must not pin either one,
+    # or the environment would stop working.
+    calls = _install_fake_gigachat(monkeypatch, _completion())
+    GigaChatClient()
+    assert "base_url" not in calls["init_kwargs"]
+    assert "auth_url" not in calls["init_kwargs"]
 
 
 def test_tls_verification_is_never_disabled_implicitly(
@@ -408,10 +453,96 @@ def test_conforms(monkeypatch: pytest.MonkeyPatch) -> None:
     assert_conforms(GigaChatClient())
 
 
+# --- the documented environment, against the real SDK ---------------------
+
+# The README documents these as "read by the SDK; the plugin pins none of them".
+# That is a promise about someone else's package, so it is checked against the
+# real one rather than the fake: a GigaChat release that renames a setting or
+# changes how it parses would otherwise silently turn the documentation into a
+# lie. No network — the SDK authenticates lazily, on the first request.
+# (env var, settings field, env value, parsed value)
+_DOCUMENTED_ENV: tuple[tuple[str, str, str, object], ...] = (
+    ("GIGACHAT_BASE_URL", "base_url", "https://gc.dev/api/v1", "https://gc.dev/api/v1"),
+    (
+        "GIGACHAT_AUTH_URL",
+        "auth_url",
+        "https://ngw.dev:9443/oauth",
+        "https://ngw.dev:9443/oauth",
+    ),
+    ("GIGACHAT_SCOPE", "scope", "GIGACHAT_API_CORP", "GIGACHAT_API_CORP"),
+    ("GIGACHAT_VERIFY_SSL_CERTS", "verify_ssl_certs", "false", False),
+    ("GIGACHAT_CA_BUNDLE_FILE", "ca_bundle_file", "/etc/ca.pem", "/etc/ca.pem"),
+    ("GIGACHAT_CERT_FILE", "cert_file", "/etc/client.crt", "/etc/client.crt"),
+    ("GIGACHAT_KEY_FILE", "key_file", "/etc/client.key", "/etc/client.key"),
+    ("GIGACHAT_TIMEOUT", "timeout", "7.5", 7.5),
+    # Documented but deliberately not constructor arguments.
+    ("GIGACHAT_PROFANITY_CHECK", "profanity_check", "false", False),
+    ("GIGACHAT_USER", "user", "svc-ci", "svc-ci"),
+    ("GIGACHAT_MAX_CONNECTIONS", "max_connections", "4", 4),
+    ("GIGACHAT_TOKEN_EXPIRY_BUFFER_MS", "token_expiry_buffer_ms", "90000", 90000),
+    ("GIGACHAT_FLAGS", "flags", '["nostream"]', ["nostream"]),
+)
+
+
+def _clear_gigachat_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop the developer's own GIGACHAT_* so the assertions mean something."""
+    for name in [key for key in os.environ if key.startswith("GIGACHAT_")]:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize(("env", "field", "value", "expected"), _DOCUMENTED_ENV)
+def test_documented_env_var_reaches_the_sdk(
+    monkeypatch: pytest.MonkeyPatch, env: str, field: str, value: str, expected: object
+) -> None:
+    pytest.importorskip("gigachat")
+    _clear_gigachat_env(monkeypatch)
+    monkeypatch.setenv(env, value)
+    client = GigaChatClient()
+    try:
+        # `_settings` is SDK-private; this test is the seam that would catch it
+        # being renamed, which is exactly what it is here to do.
+        assert getattr(client._client._settings, field) == expected
+    finally:
+        client.close()
+
+
+def test_documented_env_defaults_are_left_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With an empty environment every documented setting must still hold the
+    # SDK's own default — the plugin adds no opinion of its own.
+    pytest.importorskip("gigachat")
+    from gigachat.settings import Settings
+
+    _clear_gigachat_env(monkeypatch)
+    client = GigaChatClient()
+    try:
+        settings, default = client._client._settings, Settings()
+        for _, field, _, _ in _DOCUMENTED_ENV:
+            assert getattr(settings, field) == getattr(default, field), field
+    finally:
+        client.close()
+
+
+def test_max_retries_env_is_deliberately_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The one GIGACHAT_* the plugin overrides, and the README says so: SDK
+    # retries only fight the wall-clock cap and leave abandoned threads billing.
+    # GIGACHAT_RETRY_BACKOFF_FACTOR / _ON_STATUS_CODES are inert as a
+    # consequence — the SDK gates both on max_retries > 0.
+    pytest.importorskip("gigachat")
+    _clear_gigachat_env(monkeypatch)
+    monkeypatch.setenv("GIGACHAT_MAX_RETRIES", "5")
+    client = GigaChatClient()
+    try:
+        assert client._client._settings.max_retries == 0
+    finally:
+        client.close()
+
+
 @pytest.mark.live
 def test_live_analyze() -> None:
-    import os
-
     pytest.importorskip("gigachat")
     if not os.environ.get("GIGACHAT_CREDENTIALS"):
         pytest.skip("GIGACHAT_CREDENTIALS not set")

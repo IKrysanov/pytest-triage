@@ -127,8 +127,15 @@ class GigaChatClient(BaseTriageClient):
 
     The model defaults to ``GigaChat`` (Lite) and can be overridden with the
     SDK's own ``GIGACHAT_MODEL`` environment variable or the ``model`` argument.
-    Authorization, scope and TLS trust come from the ``GIGACHAT_*`` environment
-    unless passed explicitly.
+    Authorization, scope, endpoints and TLS come from the ``GIGACHAT_*``
+    environment unless passed explicitly.
+
+    The constructor arguments are dependency injection for tests and for callers
+    that build their own config; they are not the documented path and cover only
+    what a caller plausibly computes at runtime. Every other SDK setting
+    (``profanity_check``, ``flags``, ``max_connections``, basic auth, the token
+    refresh buffer) is read by the SDK from ``GIGACHAT_*`` and needs nothing
+    here. ``max_retries`` is the one setting this provider pins.
     """
 
     def __init__(
@@ -137,8 +144,13 @@ class GigaChatClient(BaseTriageClient):
         credentials: str | None = None,
         *,
         scope: str | None = None,
+        base_url: str | None = None,
+        auth_url: str | None = None,
         verify_ssl_certs: bool | None = None,
         ca_bundle_file: str | None = None,
+        cert_file: str | None = None,
+        key_file: str | None = None,
+        key_file_password: str | None = None,
         timeout: float | None = None,
     ) -> None:
         try:
@@ -152,8 +164,13 @@ class GigaChatClient(BaseTriageClient):
         for name, value in (
             ("credentials", credentials),
             ("scope", scope),
+            ("base_url", base_url),
+            ("auth_url", auth_url),
             ("verify_ssl_certs", verify_ssl_certs),
             ("ca_bundle_file", ca_bundle_file),
+            ("cert_file", cert_file),
+            ("key_file", key_file),
+            ("key_file_password", key_file_password),
             ("timeout", timeout),
         ):
             if value is not None:

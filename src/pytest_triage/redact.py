@@ -76,6 +76,20 @@ _JWT = re.compile(r"eyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*){2,4}")
 _URL_CRED = re.compile(
     r"([a-zA-Z][\w+.\-]{0,39}://[^\s:/@]{1,256}:)([^\s@/]{1,256})(@)"
 )
+# A whole env value that is nothing but a bare endpoint URL. `?` and `#` are
+# excluded on purpose: a query or fragment turns a URL from an address into a
+# capability — the signature in a presigned link, the token in an OAuth
+# redirect — and that is a secret, not signal. Bounded, anchored, single class.
+_URL_VALUE = re.compile(r"(?i)\A[a-z][\w+.\-]{0,39}://[^\s?#]{1,2048}\Z")
+# Env names that make a URL a credential rather than an address. A capability
+# URL and an endpoint URL are the same shape, so only the name separates them:
+# `API_SECRET_URL` hides its token in a path segment that no pattern can
+# recognise. `auth` is deliberately absent — an OAuth *endpoint*
+# (`GIGACHAT_AUTH_URL`) is an address, and half of what the exemption exists for.
+_SECRET_URL_NAME = re.compile(
+    r"(?i)(secret|token|password|passwd|credential|webhook|signed|signature|"
+    r"session|api[_-]?key|access[_-]?key|private[_-]?key)"
+)
 # HTTP auth header (any scheme, scheme optional) and inline bearer/basic tokens.
 # The quotes matter: an SDK error often carries a repr of the header mapping
 # ({'authorization': 'Bearer ey...'}), which the unquoted pattern missed.
@@ -84,10 +98,16 @@ _AUTH_HEADER = re.compile(
 )
 _BEARER = re.compile(r"(?i)((?:bearer|basic)\s+)\S+")
 # Secret-ish assignments incl. shell (TOKEN=..) and JSON ("api_key": "..").
+# The prefix guard is `(?<![A-Za-z0-9])`, not `\b`: an underscore is a word
+# character, so `\b` never matched the *compound* names that real settings
+# actually use — `key_file_password=`, `db_password=`, `refresh_token=` all
+# slipped through, and a value under 20 characters is short enough to miss the
+# base64 rule too. A letter or digit before the keyword (`oauth=`, `nopwd=`)
+# still blocks the match, exactly as `\b` did.
 _ASSIGNMENT = re.compile(
-    r"(?i)(\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|"
-    r"client[_-]?secret|private[_-]?key|auth|credential)s?[\"']?\s*[=:]\s*[\"']?)"
-    r"([^\s\"',]+)"
+    r"(?i)((?<![A-Za-z0-9])(?:password|passwd|pwd|secret|token|api[_-]?key|"
+    r"access[_-]?key|client[_-]?secret|private[_-]?key|auth|credential)s?"
+    r"[\"']?\s*[=:]\s*[\"']?)([^\s\"',]+)"
 )
 # AWS access key id.
 _AWS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
@@ -156,11 +176,34 @@ _PREFIXED_TOKENS = (
 # credentials are covered by the env, vendor, JWT, URL and assignment rules.
 _BASE64 = re.compile(r"(?<![A-Za-z0-9+])[A-Za-z0-9+]{20,}={0,2}(?![A-Za-z0-9+=])")
 
+# C0/C1 control characters except tab and newline, which are legitimate text.
+# One bounded character class, so the scan stays linear.
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def strip_control(text: str) -> str:
+    """Drop terminal control characters from text that will be printed.
+
+    An ESC or CR inside a model's hypothesis or a provider's error body is not
+    content: printed to a terminal, ``\\x1b[2K\\r`` erases the line and rewrites
+    it, so a hostile endpoint can delete pytest-triage's own warning from a CI
+    log and forge a summary in its place. The JSON report escapes these, but a
+    consumer that prints a field back does not — so they are dropped at the
+    source, where the text is authored, rather than at each print site.
+    """
+    return _CONTROL.sub("", text)
+
 
 def redact(text: str) -> str:
     """Scrub obvious secrets from text. Best-effort, deliberately over-redacts."""
     if not text:
         return text
+    # Control characters go first, before any pattern runs. A NUL is not `\s`,
+    # so `token\x00=hunter2` matched no assignment rule — yet every consumer
+    # that drops control characters (a terminal, `_provider_error`, a log
+    # viewer) renders it back as a readable `token=hunter2`. Redaction has to
+    # see the text the way it will finally be read.
+    text = strip_control(text)
     text = _redact_env_values(text)
     text = _PEM.sub(_REDACTED, text)
     text = _JWT.sub(_REDACTED, text)
@@ -177,7 +220,11 @@ def redact(text: str) -> str:
 
 def _redact_env_values(text: str) -> str:
     for key, value in os.environ.items():
-        if key in _SAFE_ENV_KEYS or _looks_like_path(value):
+        if (
+            key in _SAFE_ENV_KEYS
+            or _looks_like_path(value)
+            or _looks_like_url(key, value)
+        ):
             continue
         min_len = 4 if _SECRET_ENV_NAME.search(key) else _ENV_MIN_LEN
         if len(value) < min_len or value not in text:
@@ -194,3 +241,24 @@ def _looks_like_path(value: str) -> bool:
     if value.startswith(("/", "~")):
         return True
     return len(value) >= 3 and value[1] == ":" and value[2] in "\\/"
+
+
+def _looks_like_url(key: str, value: str) -> bool:
+    """A bare endpoint URL under a name that does not claim to hold a secret.
+
+    `GIGACHAT_BASE_URL`/`GIGACHAT_AUTH_URL` on a dev contour, a CI job URL, a
+    broker address — scrubbing these gutted exactly the connection failures they
+    explain (`Max retries exceeded with url: [REDACTED]`). The exemption is only
+    for this whole-value match; every other rule still runs over the text
+    afterwards, so an opaque token embedded in the URL (a Slack webhook's last
+    segment) is still caught by the base64 and vendor rules. A URL that carries
+    credentials inline, one with a query or fragment, and one whose variable name
+    claims to hold a secret are not exempt at all.
+    """
+    # Value first: the anchored match rejects every non-URL environment value
+    # immediately, so the name scan only runs for the few values that are URLs.
+    # This predicate is called for every variable in the environment, on every
+    # redaction, and most environments are mostly not URLs.
+    if not _URL_VALUE.match(value) or _URL_CRED.search(value):
+        return False
+    return not _SECRET_URL_NAME.search(key)

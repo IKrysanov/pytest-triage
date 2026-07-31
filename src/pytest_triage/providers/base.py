@@ -20,7 +20,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from pytest_triage.redact import redact
+from pytest_triage.redact import redact, strip_control
 from pytest_triage.verdict import (
     CATEGORIES,
     CONFIDENCES,
@@ -129,7 +129,12 @@ def _exception_line(ctx: FailureContext) -> str:
 
 
 def _cap(text: str) -> str:
-    """Truncate model-authored text by bytes, leaving an explicit marker."""
+    """Sanitize and truncate model-authored text by bytes, leaving a marker.
+
+    Control characters go first: a verdict is printed and re-printed downstream,
+    and escape sequences in it are never content (see `strip_control`).
+    """
+    text = strip_control(text)
     raw = text.encode("utf-8", "replace")
     if len(raw) <= _MAX_VERDICT_BYTES:
         return text

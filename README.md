@@ -427,29 +427,48 @@ SDK straight from the environment:
 |:---------------------|:-----------|
 | `GIGACHAT_CREDENTIALS` | Authorization key (base64 `client_id:client_secret`) |
 | `GIGACHAT_SCOPE` | `GIGACHAT_API_PERS` (default), `GIGACHAT_API_B2B`, `GIGACHAT_API_CORP` |
-| `GIGACHAT_MODEL` | Model name. Default `GigaChat` (Lite). GigaChat-specific — read only by this provider |
+| `GIGACHAT_MODEL` | Model name. Default `GigaChat` (Lite — cheapest that still classifies a traceback reliably); e.g. `GigaChat-2-Max`. Read only by this provider, so nothing clashes |
+| `GIGACHAT_BASE_URL` | API endpoint. Default `https://gigachat.devices.sberbank.ru/api/v1` |
+| `GIGACHAT_AUTH_URL` | OAuth 2.0 token endpoint. Default `https://ngw.devices.sberbank.ru:9443/api/v2/oauth` |
 | `GIGACHAT_CA_BUNDLE_FILE` | Path to a CA bundle for verifying the endpoint |
+| `GIGACHAT_VERIFY_SSL_CERTS` | `true` (default) / `false`. Turning it off disables TLS verification |
+| `GIGACHAT_CERT_FILE` | Client certificate for mutual TLS |
+| `GIGACHAT_KEY_FILE` | Private key for `GIGACHAT_CERT_FILE` |
+| `GIGACHAT_KEY_FILE_PASSWORD` | Passphrase, if that key is encrypted |
 | `GIGACHAT_ACCESS_TOKEN` | A pre-issued token, instead of credentials |
+| `GIGACHAT_USER` / `GIGACHAT_PASSWORD` | Basic auth, instead of credentials |
+| `GIGACHAT_PROFANITY_CHECK` | `true`/`false`. The API's censorship filter, applied to your traceback |
+| `GIGACHAT_TOKEN_EXPIRY_BUFFER_MS` | How early to refresh the access token. Default `60000` |
 
-The model defaults to `GigaChat` (Lite — the cheapest one that still classifies a
-traceback reliably). Override it with the SDK's own env var — each provider has
-its own, so there is nothing shared to clash:
+The SDK reads a few more (`GIGACHAT_FLAGS`, `GIGACHAT_MAX_CONNECTIONS`) that
+triage has no use for — it sends one request at a time.
+
+**`GIGACHAT_MAX_RETRIES` has no effect** — this provider pins it to `0`, because
+retries inside the SDK only fight the wall-clock cap and leave abandoned requests
+billing; `--ai-timeout`, `--ai-budget` and the circuit breaker own resilience
+instead. `GIGACHAT_RETRY_BACKOFF_FACTOR` and `GIGACHAT_RETRY_ON_STATUS_CODES` are
+inert as a consequence, since the SDK gates both on `max_retries > 0`.
+
+**Dev contours.** `GIGACHAT_BASE_URL` and `GIGACHAT_AUTH_URL` point the SDK at an
+internal gateway or a staging installation — nothing has to change in
+`pytest-triage`, which pins neither:
 
 ```bash
-export GIGACHAT_MODEL=GigaChat-2-Max
+export GIGACHAT_BASE_URL=https://gigachat.dev.internal/api/v1
+export GIGACHAT_AUTH_URL=https://ngw.dev.internal:9443/api/v2/oauth
+export GIGACHAT_CA_BUNDLE_FILE="$PWD/certs/dev-ca.pem"   # keep verification on
+pytest --ai-triage=on --ai-provider=gigachat
 ```
+
+The environment is the documented path; `GigaChatClient` takes the same options
+as constructor arguments for callers that build the client themselves, and
+anything left unset falls through to `GIGACHAT_*` untouched.
 
 **Certificate trust.** The root CA that signs the GigaChat endpoints does not
 ship in `certifi`, so out of the box you will see `CERTIFICATE_VERIFY_FAILED`,
 surfaced as a `triage provider error` (the run itself still passes or fails
-exactly as before). Point the SDK at a bundle that contains it:
-
-```bash
-export GIGACHAT_CA_BUNDLE_FILE=/path/to/ca-bundle.crt
-```
-
-Keep such a bundle in a git-ignored `certs/` folder. For GigaChat, fetch the
-official Russian Trusted Root CA — verification stays **on**:
+exactly as before). Fetch the official Russian Trusted Root CA into a git-ignored
+`certs/` folder — verification stays **on**:
 
 ```bash
 curl -fsSL -o certs/root.crt https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt
@@ -458,8 +477,15 @@ awk 1 certs/root.crt certs/sub.crt > certs/russian_trusted_bundle.pem
 export GIGACHAT_CA_BUNDLE_FILE="$PWD/certs/russian_trusted_bundle.pem"
 ```
 
+A corporate contour (`GIGACHAT_API_CORP`/`B2B`) may also want a client
+certificate: `GIGACHAT_CERT_FILE`, `GIGACHAT_KEY_FILE`, and
+`GIGACHAT_KEY_FILE_PASSWORD` if that key is encrypted.
+
 Disabling verification is possible via the SDK's own `GIGACHAT_VERIFY_SSL_CERTS`,
-but `pytest-triage` will never turn it off for you.
+but `pytest-triage` will never turn it off for you. On a dev contour with a
+self-signed certificate, prefer `GIGACHAT_CA_BUNDLE_FILE` with that contour's CA:
+`GIGACHAT_VERIFY_SSL_CERTS=false` sends your credentials over a connection nobody
+authenticated, and the failure context travels the same wire.
 
 ## What a run costs
 

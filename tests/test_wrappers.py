@@ -137,6 +137,157 @@ def test_provider_error_detail_is_capped() -> None:
     assert len(verdict.hypothesis) < 260
 
 
+def test_provider_error_detail_carries_no_terminal_control_characters() -> None:
+    # An SDK error stringifies the endpoint's own response body, and this text is
+    # printed to the terminal. "\x1b[2K\r" erases the line and rewrites it, so a
+    # hostile endpoint could delete this very warning from a CI log and forge a
+    # green summary in its place.
+    class _Hostile:
+        def analyze(self, ctx: FailureContext) -> Verdict:
+            raise RuntimeError(
+                "503\x1b[2K\rpytest-triage: 0 failed, all green\x1b[0m\x1b]0;OWNED\x07"
+            )
+
+        def close(self) -> None:
+            pass
+
+    hypothesis = TimedOutClient(_Hostile(), timeout=5).analyze(_ctx()).hypothesis
+    assert not any(ord(char) < 32 and char not in "\t\n" for char in hypothesis)
+    assert "\x1b" not in hypothesis and "\r" not in hypothesis
+    assert "503" in hypothesis  # the diagnostic content survives
+
+
+def test_control_characters_do_not_defeat_provider_error_redaction() -> None:
+    # Redaction ran before control characters were stripped, so a NUL wedged
+    # into the keyword hid the assignment from every rule — and the strip then
+    # printed the secret plainly. Order matters: clean, then redact.
+    class _Sneaky:
+        def analyze(self, ctx: FailureContext) -> Verdict:
+            raise RuntimeError("401 token\x00=hunter2")
+
+        def close(self) -> None:
+            pass
+
+    hypothesis = TimedOutClient(_Sneaky(), timeout=5).analyze(_ctx()).hypothesis
+    assert "hunter2" not in hypothesis
+    assert "401" in hypothesis  # the diagnostic part still survives
+
+
+def test_provider_exception_with_a_broken_str_is_contained() -> None:
+    # The guarantee is "a provider exception never escapes", full stop. Building
+    # the error detail calls str(exc); when that raises, the handler itself blew
+    # up, `result` stayed empty and `result[0]` raised IndexError out of analyze.
+    class _Unprintable(Exception):
+        def __str__(self) -> str:
+            raise ValueError("broken __str__")
+
+    class _Raises:
+        def analyze(self, ctx: FailureContext) -> Verdict:
+            raise _Unprintable
+
+        def close(self) -> None:
+            pass
+
+    verdict = TimedOutClient(_Raises(), timeout=5).analyze(_ctx())
+    assert verdict.category == "unknown"
+    assert degraded_reason(verdict) is not None  # surfaced, not silently dropped
+    assert "_Unprintable" in verdict.hypothesis  # the type still names the cause
+
+
+def test_a_provider_error_handler_that_itself_dies_still_yields_a_verdict() -> None:
+    # The last hole in the containment guarantee: the detail is built from
+    # `type(exc).__name__`, so an exception whose *type* refuses to be named
+    # kills the handler that exists to catch it, leaving nothing to return.
+    class _NamelessMeta(type):
+        # mypy is right that a raising, read-only `__name__` is not a
+        # substitutable override — that is precisely what makes it a hostile
+        # input, so the error is silenced rather than designed away.
+        @property
+        def __name__(cls) -> str:  # type: ignore[override]
+            raise ValueError("no name")
+
+    class _Nameless(Exception, metaclass=_NamelessMeta):
+        pass
+
+    class _Raises:
+        def analyze(self, ctx: FailureContext) -> Verdict:
+            raise _Nameless
+
+        def close(self) -> None:
+            pass
+
+    verdict = TimedOutClient(_Raises(), timeout=5).analyze(_ctx())
+    assert verdict.category == "unknown"
+    assert degraded_reason(verdict) is not None
+
+
+def test_a_dying_error_handler_never_reaches_the_users_run(
+    pytester: pytest.Pytester,
+) -> None:
+    # Invariant 1 at its sharpest. Returning a verdict is not enough: if the
+    # worker thread lets an exception escape, pytest raises a
+    # PytestUnhandledThreadExceptionWarning, and `-W error` turns a run the
+    # plugin was only supposed to observe into a failing one.
+    pytester.makeconftest(
+        """
+        from pytest_triage.providers.base import BaseTriageClient
+
+        class _NamelessMeta(type):
+            @property
+            def __name__(cls):
+                raise ValueError("no name")
+
+        class _Nameless(Exception, metaclass=_NamelessMeta):
+            pass
+
+        class EvilClient(BaseTriageClient):
+            model = "evil"
+
+            def _request(self, prompt):
+                raise _Nameless()
+        """
+    )
+    pytester.makepyfile(
+        test_invariant="""
+        def test_fail():
+            assert 1 == 2
+        """
+    )
+    result = pytester.runpytest_subprocess(
+        str(pytester.path),
+        "--ai-triage=on",
+        "--ai-provider=conftest:EvilClient",
+        "-W",
+        "error",
+    )
+    result.assert_outcomes(failed=1)  # the outcome the suite would have had
+    assert result.ret == 1
+    assert "PytestUnhandledThreadException" not in result.stdout.str()
+    assert "INTERNALERROR" not in result.stdout.str()
+
+
+def test_base_exception_in_a_provider_becomes_a_provider_error() -> None:
+    # SystemExit/KeyboardInterrupt are not Exception. Left uncaught in the worker
+    # thread they leave `result` empty, and the resulting IndexError escapes past
+    # the circuit breaker — which then never trips, so every remaining failure
+    # burns another call of the budget on a provider that cannot answer.
+    class _Exits:
+        def analyze(self, ctx: FailureContext) -> Verdict:
+            raise SystemExit(3)
+
+        def close(self) -> None:
+            pass
+
+    breaker = CircuitBreakerClient(
+        BudgetedClient(TimedOutClient(_Exits(), timeout=5), budget=10)
+    )
+    first = breaker.analyze(_ctx())
+    assert first.category == "unknown"
+    assert first.hypothesis.startswith("triage provider error")
+    breaker.analyze(_ctx())
+    assert breaker.tripped  # two consecutive errors stop the spend
+
+
 def test_degraded_reason_flags_errors_and_timeouts_not_budget() -> None:
     errored = TimedOutClient(_RaisingClient(), timeout=5).analyze(_ctx())
     assert degraded_reason(errored) is not None

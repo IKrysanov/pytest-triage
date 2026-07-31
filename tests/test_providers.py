@@ -126,6 +126,32 @@ def test_base_template_caps_a_runaway_model() -> None:
     assert "truncated" in verdict.suggested_fix
 
 
+def test_base_template_strips_control_characters_from_model_text() -> None:
+    # A verdict is printed and re-printed downstream (the JSON report escapes
+    # these, a consumer that prints a field back does not). Escape sequences in
+    # model-authored text are never content, so they are dropped at the source.
+    raw = json.dumps(
+        {
+            "category": "env",
+            "confidence": "low",
+            "hypothesis": "db down\x1b[2K\rall green\x1b[0m",
+            "suggested_fix": "\x1b]0;OWNED\x07restart postgres",
+        }
+    )
+    verdict = _EchoClient(raw).analyze(_ctx())
+    assert verdict.hypothesis == "db down[2Kall green[0m"  # inert: the ESC is gone
+    assert verdict.suggested_fix == "]0;OWNEDrestart postgres"
+    assert "db down" in verdict.hypothesis  # the diagnostic content survives
+
+
+def test_base_template_keeps_newlines_and_tabs_in_model_text() -> None:
+    # Only control characters are dropped; a two-line fix stays two lines.
+    raw = json.dumps(
+        {"category": "env", "confidence": "low", "hypothesis": "line1\nline2\tx"}
+    )
+    assert _EchoClient(raw).analyze(_ctx()).hypothesis == "line1\nline2\tx"
+
+
 # --- prompt helpers (public for provider authors) -------------------------
 
 
