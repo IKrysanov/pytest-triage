@@ -27,6 +27,7 @@ import re
 import threading
 from typing import TYPE_CHECKING
 
+from pytest_triage.context import safe_message
 from pytest_triage.redact import redact
 from pytest_triage.registry import resolve_provider
 from pytest_triage.verdict import Verdict
@@ -55,13 +56,31 @@ def _unknown(reason: str) -> Verdict:
     return Verdict(category="unknown", hypothesis=reason, confidence="low")
 
 
-def _provider_error(exc: Exception) -> Verdict:
+def _provider_error(exc: BaseException) -> Verdict:
     # Surface the actual cause (a bad API key raises here) instead of a silent
-    # unknown. Redacted and capped: a provider's message may carry a secret.
-    detail = redact(f"{type(exc).__name__}: {exc}").strip()
+    # unknown. Redacted and capped: this text is printed to the terminal and an
+    # SDK error carries the endpoint's response body verbatim, which the
+    # endpoint — not us — controls. `redact` strips control characters first, so
+    # a NUL cannot hide a secret from the patterns and then reappear on screen.
+    # `safe_message`, not str(exc): an exception whose __str__ raises must not
+    # take down the handler that exists to contain it.
+    detail = redact(f"{type(exc).__name__}: {safe_message(exc)}").strip()
     if len(detail) > _MAX_ERROR_DETAIL:
         detail = detail[:_MAX_ERROR_DETAIL] + "..."
     return _unknown(f"{_PROVIDER_ERROR}: {detail}")
+
+
+def _safe_provider_error(exc: BaseException) -> Verdict:
+    """`_provider_error`, but total: describing `exc` can itself raise.
+
+    Naming the type (`type(exc).__name__`) runs arbitrary code on a hostile
+    exception, and that failure would land in the one handler whose job is to
+    contain failures — killing the worker thread instead.
+    """
+    try:
+        return _provider_error(exc)
+    except (Exception, GeneratorExit, KeyboardInterrupt, SystemExit):
+        return _unknown(f"{_PROVIDER_ERROR}: the provider raised, unprintably")
 
 
 def degraded_reason(verdict: Verdict) -> str | None:
@@ -89,17 +108,28 @@ class TimedOutClient:
         result: list[Verdict] = []
 
         def _run() -> None:
+            # Nothing may leave this function. An exception escaping a worker
+            # thread is not contained by the caller: pytest reports it as a
+            # PytestUnhandledThreadExceptionWarning, and under `-W error` that
+            # fails a run this plugin was only supposed to observe. So the
+            # append is the last statement and every path before it is total.
+            verdict: Verdict
             try:
-                result.append(self._inner.analyze(ctx))
-            except Exception as exc:  # invariant 1: never propagate; surface it
-                result.append(_provider_error(exc))
+                verdict = self._inner.analyze(ctx)
+            except (Exception, GeneratorExit, KeyboardInterrupt, SystemExit) as exc:
+                # Process-control exceptions are outside Exception. Enumerating
+                # the standard hierarchy keeps the worker total without a broad
+                # BaseException catch: otherwise `result` stays empty and the
+                # resulting IndexError escapes past the circuit breaker.
+                verdict = _safe_provider_error(exc)
+            result.append(verdict)
 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
         thread.join(self._timeout)
         if thread.is_alive():  # abandoned; a daemon thread won't block exit
             return _unknown(_TIMEOUT_REASON)
-        return result[0]
+        return result[0]  # `_run` appends on every path, so this cannot be empty
 
     def close(self) -> None:
         self._inner.close()

@@ -5,7 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.3] - 2026-08-01
+
+### Added
+
+- `GigaChatClient` now supports custom API/auth endpoints and mutual TLS options;
+  unset values continue to come from `GIGACHAT_*`.
+- Documented GigaChat environment settings, dev endpoints, TLS, and retry behavior.
+
+### Security
+
+- Strip terminal control characters from provider errors and model verdicts, and
+  do it *before* redaction rather than after. A NUL is not `\s`, so
+  `token\x00=hunter2` matched no rule and then read back as `token=hunter2`
+  wherever control characters are dropped. Every caller is covered, so the secret
+  no longer reaches the traceback, the report, or the prompt either.
+- Redact compound secret assignments such as `key_file_password`,
+  `db_password`, and `refresh_token`.
+- Exempt only genuine endpoints from environment redaction. A URL carrying a
+  query or fragment, or one under a name that claims to hold a secret
+  (`API_SECRET_URL`, `*_WEBHOOK_URL`), is a capability rather than an address and
+  is redacted whole; `GIGACHAT_AUTH_URL` and friends stay readable.
+
+### Fixed
+
+- Preserve endpoint URLs in redacted tracebacks while still hiding inline
+  credentials and recognized tokens.
+- Convert provider `SystemExit` and `KeyboardInterrupt` failures into normal
+  error verdicts so the circuit breaker can stop further calls.
+- Never let an exception escape the triage worker thread. A provider exception
+  whose `__str__` or type name raises killed the handler meant to contain it;
+  pytest reported that as a `PytestUnhandledThreadExceptionWarning`, which
+  `-W error` turns into a failure of a run the plugin only observes.
 
 ## [0.1.2] - 2026-07-26
 
@@ -160,7 +191,8 @@ First public release. Fully opt-in: installing the plugin changes no existing su
   (3.10–3.13), CodeQL, Scorecard, DCO, Dependabot, Codecov, and a Trusted-Publishing
   release with Sigstore attestations.
 
-[Unreleased]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/IKrysanov/pytest-triage/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/IKrysanov/pytest-triage/releases/tag/v0.1.0
